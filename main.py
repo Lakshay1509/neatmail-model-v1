@@ -115,11 +115,13 @@ def build_few_shot_block(corrections: list[dict]) -> str:
     if not corrections:
         return ""
 
-    lines = ["PAST USER CORRECTIONS (follow these strictly — user explicitly fixed these):"]
-    for c in corrections:
-        wrong = f"Wrong: {c['wrong_label']} → " if c["wrong_label"] else ""
-        lines.append(f'  Email: "{c["snippet"][:120]}..."')
-        lines.append(f"  {wrong}Correct label: {c['correct_label']}\n")
+    lines = ["<user_corrections>"]
+    lines.append("The user has previously corrected these similar emails. Match these exactly if the current email is similar:")
+    for i, c in enumerate(corrections, 1):
+        wrong = f" (was wrongly labelled: {c['wrong_label']}" + ")" if c["wrong_label"] else ""
+        lines.append(f"  [{i}] Email snippet: \"{c['snippet'][:100]}...\"")
+        lines.append(f"       Correct label: {c['correct_label']}{wrong}")
+    lines.append("</user_corrections>")
 
     return "\n".join(lines)
 
@@ -129,75 +131,47 @@ def classify_email(email_data: EmailRequest) -> EmailClassificationResult:
     few_shot_block = build_few_shot_block(corrections)
 
     tags = email_data.tags
-    tag_names = "\n- ".join([t.name for t in tags])
-    
     tag_context = "\n".join([
         f"- {t.name}: {t.description.strip() if t.description and t.description.strip() else 'No description provided'}"
         for t in tags
     ])
-    
-    system_prompt = f"""You are an email classification system. Your ONLY job is to return a valid JSON object with "category" and "response_required" fields.
 
-      Available Categories:
-      {tag_names}
+    # Lean system prompt: role + output contract only.
+    # All dynamic context lives in the user prompt to avoid cross-message rule conflicts.
+    system_prompt = """You are an email classifier. Analyze the email provided and return ONLY a JSON object.
 
-CLASSIFICATION RULES (apply in order, highest priority first):
-1. FINANCE/PAYMENT: If email contains transactions, payments, UPI, bank alerts, invoices, or money → use a relevant finance-related category if available, else use "Automated alerts" as fallback
-2. DOMAIN-SPECIFIC: Match sender domain to category (bank → Finance/Automated alerts, calendar → Event update)
-3. SEMANTIC CONTEXT: Analyze PURPOSE, not keywords
-   - Financial transactions → Finance (or Automated alerts if Finance unavailable)
-   - Calendar invites → Event update
-   - Marketing → Marketing
-4. KEYWORD MATCHING: Use for unclear cases
-5. CONFIDENCE: If < 85% confidence → return empty string
+Output format (no extra text, no markdown):
+{"category": "<exact category name or empty string>", "response_required": <true|false>}
 
-RESPONSE_REQUIRED RULES:
-true ONLY when ALL three hold:
-1. Sent by a real human (not no-reply/system/automated sender)
-2. Directly addressed to the recipient (not CC'd, BCC'd, or broadcast)
-3. Explicitly needs a reply — question, decision, or confirmation requested
+Rules:
+- category: pick exactly one name from the provided list, or return "" if confidence is below 85%.
+- response_required: true ONLY when the sender is a real human (not automated/no-reply), the email is directly addressed to the recipient, AND a reply/decision/action is explicitly expected. Default is false."""
 
-false for everything else: alerts, receipts, newsletters, notifications, FYIs, status updates, or any email where not replying would be normal.
+    # User prompt is self-contained: email + all context needed to classify it.
+    sensitivity_guidance = {
+        "always draft": "Treat response_required as true for nearly all human-sent emails; false only for obvious automated/no-reply messages.",
+        "if known sender AND directly addressed": "Set response_required=true only if the sender seems personally known and the email directly asks this user to respond.",
+        "if actionable": "Set response_required=true only if a concrete action, decision, or reply is needed.",
+        "if actionable AND critical": "Set response_required=true only if action is needed AND the email is urgent, high-risk, or has a clear deadline.",
+    }.get(email_data.sensitivity.strip().lower(), f"Apply standard response_required rules. Sensitivity: {email_data.sensitivity}")
 
-Default: false. Independent of category.
-
-
-SENSITIVITY GUIDANCE FOR response_required (based on the draft sensitivity setting provided by the user message):
-- "always draft" => response_required should be true for nearly all human-origin emails except obvious automated/no-reply notifications.
-- "if known sender AND directly addressed" => true only when sender appears known/personal and email is directly asking this user to respond.
-- "if actionable" => true when concrete action/decision/reply is needed.
-- "if actionable AND critical" => true only when action is needed and urgency/risk/deadline/importance is clear.
-
-OUTPUT FORMAT (strict):
-{{"category": "exact_category_name", "response_required": true}}
-OR
-{{"category": "", "response_required": false}}
-
-EXAMPLES:
-Input: Subject="You have done a UPI txn", From="HDFC Bank", Body="Rs.110.00 has been debited"
-Output: {{"category": "Finance", "response_required": false}}
-Input: Subject="Your project is paused", From="Appwrite <noreply@appwrite.io>", Body="Your project has been paused due to inactivity"
-Output: {{"category":"Automated alert", "response_required": false}}
-"""
-
-    user_prompt = f"""Classify this email into ONE category or return empty if uncertain:
-
+    user_prompt = f"""<email>
 Subject: {email_data.subject}
 From: {email_data.from_}
 Body: {email_data.bodySnippet}
+</email>
 
-Available categories:
-- {tag_names}
-
-Category descriptions:
+<categories>
 {tag_context}
+</categories>
 
-Draft sensitivity setting:
-{email_data.sensitivity}
+<sensitivity_rule>
+{sensitivity_guidance}
+</sensitivity_rule>
 
 {few_shot_block}
 
-Return only valid JSON with fields: category, response_required."""
+Classify the email. Return only valid JSON."""
 
     messages = [
         {"role": "system", "content": system_prompt},
