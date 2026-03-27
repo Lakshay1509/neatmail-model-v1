@@ -144,7 +144,7 @@ Output format (no extra text, no markdown):
 {"category": "<exact category name or empty string>", "response_required": <true|false>}
 
 Rules:
-- category: pick exactly one name from the provided list, or return "" if confidence is below 85%.
+- category: pick exactly one name from the provided list, or return "" if confidence is below 95%. DON'T FORCE FIT.
 - response_required: true ONLY when the sender is a real human (not automated/no-reply), the email is directly addressed to the recipient, AND a reply/decision/action is explicitly expected. Default is false."""
 
     # User prompt is self-contained: email + all context needed to classify it.
