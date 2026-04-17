@@ -2,15 +2,34 @@ import os
 import re
 import json
 from typing import List, Optional
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Security, status
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 from openai import OpenAI
 from dotenv import load_dotenv
 from pinecone import Pinecone, ServerlessSpec
 import uuid
 
-app = FastAPI()
 load_dotenv()
+
+API_KEY_NAME = "X-API-Key"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+
+def get_api_key(api_key_header: str = Security(api_key_header)):
+    expected_api_key = os.environ.get("DASHBOARD_API_KEY")
+    if not expected_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="API Key not configured on the server"
+        )
+    if api_key_header == expected_api_key:
+        return api_key_header
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid API Key"
+    )
+
+app = FastAPI(dependencies=[Security(get_api_key)])
 
 # Make sure to set your OPENAI_API_KEY environment variable
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
