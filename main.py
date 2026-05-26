@@ -59,6 +59,9 @@ class CorrectionRequest(BaseModel):
     correct_label: str
     wrong_label: Optional[str] = None
 
+class DeleteUserRequest(BaseModel):
+    user_id: str
+
 class EmailClassificationResult(BaseModel):
     category: str
     response_required: bool
@@ -267,6 +270,11 @@ def store_user_correction(request: CorrectionRequest):
         wrong_label=request.wrong_label
     )
     return {"status": "success", "message": "Correction saved"}
+
+@app.post("/delete-user")
+def delete_user_data(request: DeleteUserRequest):
+    index.delete(filter={"user_id": {"$eq": request.user_id}})
+    return {"status": "success", "message": f"All data deleted for user {request.user_id}"}
 
 if __name__ == "__main__":
     import uvicorn
