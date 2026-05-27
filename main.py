@@ -65,6 +65,8 @@ class DeleteUserRequest(BaseModel):
 class EmailClassificationResult(BaseModel):
     category: str
     response_required: bool
+    ai_summary: str = ""
+    ai_action: str = ""
 
 
 def init_index():
@@ -160,14 +162,28 @@ def classify_email(email_data: EmailRequest) -> EmailClassificationResult:
 
     # Lean system prompt: role + output contract only.
     # All dynamic context lives in the user prompt to avoid cross-message rule conflicts.
-    system_prompt = """You are an email classifier. Analyze the email provided and return ONLY a JSON object.
+    system_prompt = """You are an email classifier. Return ONLY valid JSON.
 
-Output format (no extra text, no markdown):
-{"category": "<exact category name or empty string>", "response_required": <true|false>}
+Output format:
+{"category": "<exact tag name or empty string>", "response_required": <true|false>, "ai_summary": "<summary or empty string>", "ai_action": "<action or empty string>"}
 
 Rules:
-- category: pick exactly one name from the provided list, or return "" if confidence is below 95%. DON'T FORCE FIT.
-- response_required: true ONLY when the sender is a real human (not automated/no-reply), the email is directly addressed to the recipient, AND a reply/decision/action is explicitly expected. Default is false."""
+1. category: pick exactly one from the provided list, or "" if confidence < 95%.
+2. response_required: true only when sender is human, directly addressed, AND a reply/action is explicitly expected.
+3. ai_summary & ai_action: populate ONLY when category is "Action Needed" or "Pending Response". Otherwise return "".
+
+ai_summary (12–15 words, active voice, lead with risk/ask):
+GOOD: "Production DB replication lag >30s, on-call needs escalation"
+GOOD: "Client threatening to churn over delayed feature delivery"
+GOOD: "2 invoices over $5K awaiting review; one is past due"
+BAD:  "The devops team sent an email about server issues"
+
+ai_action (2–3 words, imperative verb-first, pick from the approved list):
+GOOD: "Escalate now", "Reply with ETA", "Review & approve", "Investigate now"
+BAD:  "Action needed", "Please review", "See email", "Read email"
+
+Approved actions: "Escalate now", "Reply with ETA", "Review & approve", "Send feedback", "Confirm availability", "Approve invoices", "Read later", "Review billing", "Check activity", "Submit proposal", "Renew or review", "Investigate now"
+"""
 
     # User prompt is self-contained: email + all context needed to classify it.
     sensitivity_guidance = {
@@ -200,13 +216,32 @@ Classify the email. Return only valid JSON."""
         {"role": "user", "content": user_prompt}
     ]
 
+    schema = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "email_classification",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "category": {"type": "string"},
+                    "response_required": {"type": "boolean"},
+                    "ai_summary": {"type": "string"},
+                    "ai_action": {"type": "string"}
+                },
+                "required": ["category", "response_required", "ai_summary", "ai_action"],
+                "additionalProperties": False
+            }
+        }
+    }
+
     try:
         completion = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
-            response_format={"type": "json_object"},
+            response_format=schema,
             temperature=0,
-            max_completion_tokens=40,
+            max_completion_tokens=100,
             seed=42,
         )
     except Exception as e:
@@ -219,8 +254,6 @@ Classify the email. Return only valid JSON."""
     try:
         parsed_json = json.loads(content)
         parsed_category = parsed_json.get("category", "")
-        if not isinstance(parsed_category, str):
-            parsed_category = ""
             
         def normalize(s: str) -> str:
             return re.sub(r'[^a-z0-9]', '', s.lower())
@@ -243,14 +276,12 @@ Classify the email. Return only valid JSON."""
                     break
 
         category = matched_tag.name if matched_tag else ""
-        
-        response_required = parsed_json.get("response_required", False)
-        if not isinstance(response_required, bool):
-            response_required = False
 
         return EmailClassificationResult(
             category=category,
-            response_required=response_required
+            response_required=parsed_json.get("response_required", False),
+            ai_summary=parsed_json.get("ai_summary", ""),
+            ai_action=parsed_json.get("ai_action", "")
         )
             
     except json.JSONDecodeError:
