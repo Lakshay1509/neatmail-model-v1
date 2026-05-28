@@ -135,6 +135,11 @@ def get_corrections(user_id: str, subject: str, body: str, top_k: int = 3) -> li
 
     return corrections
 
+def sanitize_prompt_text(s: str) -> str:
+    """Replace double quotes with single quotes to avoid breaking prompt quoting."""
+    return s.replace('"', "'")
+
+
 def build_few_shot_block(corrections: list[dict]) -> str:
     if not corrections:
         return ""
@@ -142,9 +147,12 @@ def build_few_shot_block(corrections: list[dict]) -> str:
     lines = ["<user_corrections>"]
     lines.append("The user has previously corrected these similar emails. Match these exactly if the current email is similar:")
     for i, c in enumerate(corrections, 1):
-        wrong = f" (was wrongly labelled: {c['wrong_label']}" + ")" if c["wrong_label"] else ""
-        lines.append(f"  [{i}] Email snippet: \"{c['snippet'][:100]}...\"")
-        lines.append(f"       Correct label: {c['correct_label']}{wrong}")
+        wrong_label = sanitize_prompt_text(c["wrong_label"])
+        correct_label = sanitize_prompt_text(c["correct_label"])
+        snippet = sanitize_prompt_text(c["snippet"][:100])
+        wrong = f" (was wrongly labelled: {wrong_label})" if wrong_label else ""
+        lines.append(f"  [{i}] Email snippet: \"{snippet}...\"")
+        lines.append(f"       Correct label: {correct_label}{wrong}")
     lines.append("</user_corrections>")
 
     return "\n".join(lines)
