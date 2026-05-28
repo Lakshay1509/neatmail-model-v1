@@ -170,17 +170,22 @@ Output format:
 Rules:
 1. category: pick exactly one from the provided list, or "" if confidence < 95%.
 2. response_required: true only when sender is human, directly addressed, AND a reply/action is explicitly expected.
-3. ai_summary & ai_action: populate ONLY when category is "Action Needed" or "Pending Response". Otherwise return "".
+3. CONDITIONAL FIELDS - ai_summary and ai_action:
+   - ONLY generate these fields if the selected category indicates the email requires human action or follow-up.
+   - For newsletters, marketing, automated alerts, notifications, read-only updates, and any non-actionable category: YOU MUST RETURN EMPTY STRINGS "" for both ai_summary and ai_action.
+   - Do NOT be helpful and summarize everything. Only summarize when the email truly requires a response or action from the user.
 
-ai_summary (12–15 words, active voice, lead with risk/ask):
-GOOD: "Production DB replication lag >30s, on-call needs escalation"
-GOOD: "Client threatening to churn over delayed feature delivery"
-GOOD: "2 invoices over $5K awaiting review; one is past due"
-BAD:  "The devops team sent an email about server issues"
+4. When ai_summary IS required (actionable emails only):
+   - 12–15 words, active voice, lead with risk/ask.
+   - GOOD: "Production DB replication lag >30s, on-call needs escalation"
+   - GOOD: "Client threatening to churn over delayed feature delivery"
+   - GOOD: "2 invoices over $5K awaiting review; one is past due"
+   - BAD:  "The devops team sent an email about server issues"
 
-ai_action (2–3 words, imperative verb-first, pick from the approved list):
-GOOD: "Escalate now", "Reply with ETA", "Review & approve", "Investigate now"
-BAD:  "Action needed", "Please review", "See email", "Read email"
+5. When ai_action IS required (actionable emails only):
+   - 2–3 words, imperative verb-first, pick from the approved list.
+   - GOOD: "Escalate now", "Reply with ETA", "Review & approve", "Investigate now"
+   - BAD:  "Action needed", "Please review", "See email", "Read email"
 
 Approved actions: "Escalate now", "Reply with ETA", "Review & approve", "Send feedback", "Confirm availability", "Approve invoices", "Read later", "Review billing", "Check activity", "Submit proposal", "Renew or review", "Investigate now"
 """
@@ -208,6 +213,8 @@ Body: {email_data.bodySnippet}
 </sensitivity_rule>
 
 {few_shot_block}
+
+CRITICAL: Only populate ai_summary and ai_action if the selected category is "Action Needed" or "Pending Response". For all other categories including marketing, automated alerts, and read-only emails, return empty strings "" for both fields.
 
 Classify the email. Return only valid JSON."""
 
@@ -277,11 +284,17 @@ Classify the email. Return only valid JSON."""
 
         category = matched_tag.name if matched_tag else ""
 
+        # Server-side enforcement: strip ai_summary/ai_action for non-actionable categories
+        # because LLMs often hallucinate these fields despite conditional instructions.
+        # NOTE: normalize() strips all non-alphanumeric chars (including spaces).
+        actionable_keywords = {"actionneeded", "pendingresponse"}
+        is_actionable = normalize(category) in actionable_keywords
+
         return EmailClassificationResult(
             category=category,
             response_required=parsed_json.get("response_required", False),
-            ai_summary=parsed_json.get("ai_summary", ""),
-            ai_action=parsed_json.get("ai_action", "")
+            ai_summary=parsed_json.get("ai_summary", "") if is_actionable else "",
+            ai_action=parsed_json.get("ai_action", "") if is_actionable else ""
         )
             
     except json.JSONDecodeError:
