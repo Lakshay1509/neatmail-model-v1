@@ -69,6 +69,70 @@ class EmailClassificationResult(BaseModel):
     ai_action: str = ""
 
 
+def _normalize_tag(s: str) -> str:
+    return re.sub(r'[^a-z0-9]', '', s.lower())
+
+
+def match_category(parsed_category: str, tags: List[Tag]) -> str:
+    """Match parsed category against available tags. Returns matched tag name or empty string."""
+    if not parsed_category:
+        return ""
+    normalized_parsed = _normalize_tag(parsed_category)
+
+    # 1. Try exact normalized match
+    for t in tags:
+        if _normalize_tag(t.name) == normalized_parsed:
+            return t.name
+
+    # 2. Fallback: substring matching
+    if len(normalized_parsed) > 2:
+        for t in tags:
+            nt = _normalize_tag(t.name)
+            if nt in normalized_parsed or normalized_parsed in nt:
+                return t.name
+
+    return ""
+
+
+def is_actionable_category(category: str) -> bool:
+    return _normalize_tag(category) in {"actionneeded", "pendingresponse"}
+
+
+# ── Batch endpoint models ──────────────────────────────────────────────
+
+class MaxBatchSizeExceededError(Exception):
+    pass
+
+
+class BatchEmailItem(BaseModel):
+    id: str
+    user_id: str
+    bodySnippet: str
+    subject: str
+    from_: str = Field(alias="from")
+    tags: List[Tag]
+    sensitivity: str = "if actionable"
+
+
+class BatchClassifyRequest(BaseModel):
+    requests: List[BatchEmailItem]
+
+
+class BatchEmailResult(BaseModel):
+    id: str
+    category: str
+    response_required: bool
+    ai_summary: str = ""
+    ai_action: str = ""
+
+
+class BatchClassifyResponse(BaseModel):
+    results: List[BatchEmailResult]
+
+
+MAX_BATCH_SIZE = 10
+
+
 def init_index():
     if INDEX_NAME not in [i.name for i in pc.list_indexes()]:
         pc.create_index(
@@ -199,12 +263,7 @@ Approved actions: "Escalate now", "Reply with ETA", "Review & approve", "Send fe
 """
 
     # User prompt is self-contained: email + all context needed to classify it.
-    sensitivity_guidance = {
-        "always draft": "Treat response_required as true for nearly all human-sent emails; false only for obvious automated/no-reply messages.",
-        "if known sender AND directly addressed": "Set response_required=true only if the sender seems personally known and the email directly asks this user to respond.",
-        "if actionable": "Set response_required=true only if a concrete action, decision, or reply is needed.",
-        "if actionable AND critical": "Set response_required=true only if action is needed AND the email is urgent, high-risk, or has a clear deadline.",
-    }.get(email_data.sensitivity.strip().lower(), f"Apply standard response_required rules. Sensitivity: {email_data.sensitivity}")
+    sensitivity_guidance = _get_sensitivity_guidance(email_data.sensitivity)
 
     user_prompt = f"""<email>
 Subject: {email_data.subject}
@@ -269,34 +328,9 @@ Classify the email. Return only valid JSON."""
     try:
         parsed_json = json.loads(content)
         parsed_category = parsed_json.get("category", "")
-            
-        def normalize(s: str) -> str:
-            return re.sub(r'[^a-z0-9]', '', s.lower())
-            
-        normalized_parsed = normalize(parsed_category)
-        
-        matched_tag = None
-        # 1. Try exact normalized match
-        for t in tags:
-            if normalize(t.name) == normalized_parsed:
-                matched_tag = t
-                break
-                
-        # 2. Fallback: try substring matching
-        if not matched_tag and len(normalized_parsed) > 2:
-            for t in tags:
-                normalized_target = normalize(t.name)
-                if normalized_target in normalized_parsed or normalized_parsed in normalized_target:
-                    matched_tag = t
-                    break
 
-        category = matched_tag.name if matched_tag else ""
-
-        # Server-side enforcement: strip ai_summary/ai_action for non-actionable categories
-        # because LLMs often hallucinate these fields despite conditional instructions.
-        # NOTE: normalize() strips all non-alphanumeric chars (including spaces).
-        actionable_keywords = {"actionneeded", "pendingresponse"}
-        is_actionable = normalize(category) in actionable_keywords
+        category = match_category(parsed_category, tags)
+        is_actionable = is_actionable_category(category)
 
         return EmailClassificationResult(
             category=category,
@@ -308,9 +342,205 @@ Classify the email. Return only valid JSON."""
     except json.JSONDecodeError:
         raise HTTPException(status_code=500, detail="Invalid JSON response from OpenAI")
 
+
+SENSITIVITY_MAP = {
+    "always draft": "Treat response_required as true for nearly all human-sent emails; false only for obvious automated/no-reply messages.",
+    "if known sender AND directly addressed": "Set response_required=true only if the sender seems personally known and the email directly asks this user to respond.",
+    "if actionable": "Set response_required=true only if a concrete action, decision, or reply is needed.",
+    "if actionable AND critical": "Set response_required=true only if action is needed AND the email is urgent, high-risk, or has a clear deadline.",
+}
+
+
+def _get_sensitivity_guidance(sensitivity: str) -> str:
+    return SENSITIVITY_MAP.get(
+        sensitivity.strip().lower(),
+        f"Apply standard response_required rules. Sensitivity: {sensitivity}"
+    )
+
+
+def classify_batch(requests: List[BatchEmailItem]) -> List[BatchEmailResult]:
+    """Classify up to 10 emails in a single LLM call. One prompt, one response."""
+    if not requests:
+        return []
+    if len(requests) > MAX_BATCH_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Batch size exceeds maximum of {MAX_BATCH_SIZE}. Received {len(requests)} requests."
+        )
+
+    email_blocks = []
+    for req in requests:
+        corrections = get_corrections(req.user_id, req.subject, req.bodySnippet)
+        few_shot_block = build_few_shot_block(corrections)
+
+        tag_context = "\n".join([
+            f"- {t.name}: {t.description.strip() if t.description and t.description.strip() else 'No description provided'}"
+            for t in req.tags
+        ])
+
+        sensitivity_guidance = _get_sensitivity_guidance(req.sensitivity)
+
+        block = f"""<email id="{req.id}">
+Subject: {sanitize_prompt_text(req.subject)}
+From: {sanitize_prompt_text(req.from_)}
+Body: {sanitize_prompt_text(req.bodySnippet)}
+<categories>
+{tag_context}
+</categories>
+<sensitivity_rule>
+{sensitivity_guidance}
+</sensitivity_rule>
+{few_shot_block}
+</email>"""
+        email_blocks.append(block)
+
+    all_emails = "\n\n".join(email_blocks)
+
+    system_prompt = """You are an email classifier. Return ONLY valid JSON.
+
+Output format:
+{"results": [{"id": "<request id>", "category": "<exact tag name or empty string>", "response_required": <true|false>, "ai_summary": "<summary or empty string>", "ai_action": "<action or empty string>"}, ...]}
+
+Rules:
+1. category: pick exactly one from the provided list for each email, or "" if confidence < 95%.
+2. response_required: true only when sender is human, directly addressed, AND a reply/action is explicitly expected.
+3. CONDITIONAL FIELDS - ai_summary and ai_action:
+   - ONLY generate these fields if the selected category indicates the email requires human action or follow-up.
+   - For newsletters, marketing, automated alerts, notifications, read-only updates, and any non-actionable category: YOU MUST RETURN EMPTY STRINGS "" for both ai_summary and ai_action.
+   - Do NOT be helpful and summarize everything. Only summarize when the email truly requires a response or action from the user.
+
+4. When ai_summary IS required (actionable emails only):
+   - 12–15 words, active voice, lead with risk/ask.
+   - GOOD: "Production DB replication lag >30s, on-call needs escalation"
+   - GOOD: "Client threatening to churn over delayed feature delivery"
+   - GOOD: "2 invoices over $5K awaiting review; one is past due"
+   - BAD:  "The devops team sent an email about server issues"
+
+5. When ai_action IS required (actionable emails only):
+   - 2–3 words, imperative verb-first, pick from the approved list.
+   - GOOD: "Escalate now", "Reply with ETA", "Review & approve", "Investigate now"
+   - BAD:  "Action needed", "Please review", "See email", "Read email"
+
+Approved actions: "Escalate now", "Reply with ETA", "Review & approve", "Send feedback", "Confirm availability", "Approve invoices", "Read later", "Review billing", "Check activity", "Submit proposal", "Renew or review", "Investigate now"
+"""
+
+    user_prompt = f"""<batch>
+{all_emails}
+</batch>
+
+CRITICAL: Only populate ai_summary and ai_action if the selected category is "Action Needed" or "Pending Response". For all other categories including marketing, automated alerts, and read-only emails, return empty strings "" for both fields.
+
+Classify each email. Return only valid JSON."""
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
+    ]
+
+    schema = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "batch_email_classification",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "results": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string"},
+                                "category": {"type": "string"},
+                                "response_required": {"type": "boolean"},
+                                "ai_summary": {"type": "string"},
+                                "ai_action": {"type": "string"}
+                            },
+                            "required": ["id", "category", "response_required", "ai_summary", "ai_action"],
+                            "additionalProperties": False
+                        }
+                    }
+                },
+                "required": ["results"],
+                "additionalProperties": False
+            }
+        }
+    }
+
+    try:
+        completion = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=messages,
+            response_format=schema,
+            temperature=0,
+            max_completion_tokens=2000,
+            seed=42,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"OpenAI API error: {str(e)}")
+
+    content = completion.choices[0].message.content
+    if not content:
+        raise HTTPException(status_code=500, detail="No response from OpenAI")
+
+    try:
+        parsed_json = json.loads(content)
+        raw_results = parsed_json.get("results", [])
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=500, detail="Invalid JSON response from OpenAI")
+
+    req_map = {r.id: r for r in requests}
+
+    final_results: List[BatchEmailResult] = []
+    for raw in raw_results:
+        result_id = raw.get("id", "")
+        req = req_map.get(result_id)
+
+        if req is None:
+            final_results.append(BatchEmailResult(
+                id=result_id,
+                category=raw.get("category", ""),
+                response_required=raw.get("response_required", False),
+                ai_summary=raw.get("ai_summary", ""),
+                ai_action=raw.get("ai_action", "")
+            ))
+            continue
+
+        parsed_category = raw.get("category", "")
+        category = match_category(parsed_category, req.tags)
+        is_actionable = is_actionable_category(category)
+
+        final_results.append(BatchEmailResult(
+            id=result_id,
+            category=category,
+            response_required=raw.get("response_required", False),
+            ai_summary=raw.get("ai_summary", "") if is_actionable else "",
+            ai_action=raw.get("ai_action", "") if is_actionable else ""
+        ))
+
+    returned_ids = {r.id for r in final_results}
+    for req in requests:
+        if req.id not in returned_ids:
+            final_results.append(BatchEmailResult(
+                id=req.id,
+                category="",
+                response_required=False,
+                ai_summary="",
+                ai_action=""
+            ))
+
+    return final_results
+
+
 @app.post("/classify", response_model=EmailClassificationResult)
 def classify_email_endpoint(request: EmailRequest):
     return classify_email(request)
+
+
+@app.post("/classify-batch", response_model=BatchClassifyResponse)
+def classify_batch_endpoint(request: BatchClassifyRequest):
+    results = classify_batch(request.requests)
+    return {"results": results}
 
 @app.post("/correct")
 def store_user_correction(request: CorrectionRequest):
