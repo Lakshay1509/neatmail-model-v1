@@ -69,6 +69,13 @@ class EmailClassificationResult(BaseModel):
     ai_action: str = ""
 
 
+DIGEST_SENDER_RE = re.compile(r'digest@send\.neatmail\.app', re.IGNORECASE)
+
+
+def _is_digest_sender(from_: str) -> bool:
+    return bool(DIGEST_SENDER_RE.search(from_))
+
+
 def _normalize_tag(s: str) -> str:
     return re.sub(r'[^a-z0-9]', '', s.lower())
 
@@ -332,11 +339,18 @@ Classify the email. Return only valid JSON."""
         category = match_category(parsed_category, tags)
         is_actionable = is_actionable_category(category)
 
+        ai_summary = parsed_json.get("ai_summary", "") if is_actionable else ""
+        ai_action = parsed_json.get("ai_action", "") if is_actionable else ""
+
+        if _is_digest_sender(email_data.from_):
+            ai_summary = ""
+            ai_action = ""
+
         return EmailClassificationResult(
             category=category,
             response_required=parsed_json.get("response_required", False),
-            ai_summary=parsed_json.get("ai_summary", "") if is_actionable else "",
-            ai_action=parsed_json.get("ai_action", "") if is_actionable else ""
+            ai_summary=ai_summary,
+            ai_action=ai_action
         )
             
     except json.JSONDecodeError:
@@ -510,12 +524,19 @@ Classify each email. Return only valid JSON."""
         category = match_category(parsed_category, req.tags)
         is_actionable = is_actionable_category(category)
 
+        ai_summary = raw.get("ai_summary", "") if is_actionable else ""
+        ai_action = raw.get("ai_action", "") if is_actionable else ""
+
+        if _is_digest_sender(req.from_):
+            ai_summary = ""
+            ai_action = ""
+
         final_results.append(BatchEmailResult(
             id=result_id,
             category=category,
             response_required=raw.get("response_required", False),
-            ai_summary=raw.get("ai_summary", "") if is_actionable else "",
-            ai_action=raw.get("ai_action", "") if is_actionable else ""
+            ai_summary=ai_summary,
+            ai_action=ai_action
         ))
 
     returned_ids = {r.id for r in final_results}
