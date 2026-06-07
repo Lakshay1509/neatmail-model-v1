@@ -318,7 +318,7 @@ Classify the email. Return only valid JSON."""
 
     try:
         completion = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4.1-nano",
             messages=messages,
             response_format=schema,
             temperature=0,
@@ -483,7 +483,7 @@ Classify each email. Return only valid JSON."""
 
     try:
         completion = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4.1-nano",
             messages=messages,
             response_format=schema,
             temperature=0,
