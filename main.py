@@ -102,6 +102,8 @@ def match_category(parsed_category: str, tags: List[Tag]) -> str:
 
 
 def is_actionable_category(category: str) -> bool:
+    # "Pending Response" is only valid for human senders — the prompt hard-blocks it
+    # for automated senders, so by the time we reach here it is always a human email.
     return _normalize_tag(category) in {"actionneeded", "pendingresponse"}
 
 
@@ -242,31 +244,21 @@ def classify_email(email_data: EmailRequest) -> EmailClassificationResult:
     # Lean system prompt: role + output contract only.
     # All dynamic context lives in the user prompt to avoid cross-message rule conflicts.
     system_prompt = """You are an email classifier. Return ONLY valid JSON.
-
-Output format:
 {"category": "<exact tag name or empty string>", "response_required": <true|false>, "ai_summary": "<summary or empty string>", "ai_action": "<action or empty string>"}
 
-Rules:
-1. category: pick exactly one from the provided list, or "" if confidence < 95%.
-2. response_required: true only when sender is human, directly addressed, AND a reply/action is explicitly expected.
-3. CONDITIONAL FIELDS - ai_summary and ai_action:
-   - ONLY generate these fields if the selected category indicates the email requires human action or follow-up.
-   - For newsletters, marketing, automated alerts, notifications, read-only updates, and any non-actionable category: YOU MUST RETURN EMPTY STRINGS "" for both ai_summary and ai_action.
-   - Do NOT be helpful and summarize everything. Only summarize when the email truly requires a response or action from the user.
+AUTOMATED SENDER: From is a platform/service/system (noreply, notifications, billing, alerts, mailer, digest, newsletter, or a named product like GitHub/Slack/Stripe/Perplexity/Google/AWS/Notion/Figma) OR body is template-like, links to a dashboard/settings, or has no expectation of personal reply.
 
-4. When ai_summary IS required (actionable emails only):
-   - 12–15 words, active voice, lead with risk/ask.
-   - GOOD: "Production DB replication lag >30s, on-call needs escalation"
-   - GOOD: "Client threatening to churn over delayed feature delivery"
-   - GOOD: "2 invoices over $5K awaiting review; one is past due"
-   - BAD:  "The devops team sent an email about server issues"
-
-5. When ai_action IS required (actionable emails only):
-   - 2–3 words, imperative verb-first, pick from the approved list.
-   - GOOD: "Escalate now", "Reply with ETA", "Review & approve", "Investigate now"
-   - BAD:  "Action needed", "Please review", "See email", "Read email"
-
-Approved actions: "Escalate now", "Reply with ETA", "Review & approve", "Send feedback", "Confirm availability", "Approve invoices", "Read later", "Review billing", "Check activity", "Submit proposal", "Renew or review", "Investigate now"
+RULES
+1. category: pick exactly one from the provided list, or "" if confidence <95%.
+2. response_required: false for automated senders; true for human senders only if a reply/action is explicitly expected.
+3. "Pending Response": NEVER for automated senders. Human emails only.
+4. ai_summary + ai_action = "" for all non-actionable categories (newsletters, alerts, marketing, read-only).
+   Populate ONLY when category is "Action Needed" or "Pending Response" (human only).
+5. ai_summary: 12-15 words, active voice.
+   Automated → calm, state the in-app task. e.g. "Perplexity asks you to reconnect Google Drive in settings"
+   Human → urgent, lead with risk/ask. e.g. "Client threatening churn over delayed feature delivery"
+6. ai_action: 2-3 words, imperative verb-first. Pick from:
+   "Escalate now"|"Reply with ETA"|"Review & approve"|"Send feedback"|"Confirm availability"|"Approve invoices"|"Read later"|"Review billing"|"Check activity"|"Submit proposal"|"Renew or review"|"Investigate now"|"Reconnect now"
 """
 
     # User prompt is self-contained: email + all context needed to classify it.
@@ -288,7 +280,7 @@ Body: {email_data.bodySnippet}
 
 {few_shot_block}
 
-CRITICAL: Only populate ai_summary and ai_action if the selected category is "Action Needed" or "Pending Response". For all other categories including marketing, automated alerts, and read-only emails, return empty strings "" for both fields.
+NOTE: Automated senders → never "Pending Response", response_required=false. Fill ai_summary+ai_action only for "Action Needed" or "Pending Response" (human only); else return "".
 
 Classify the email. Return only valid JSON."""
 
@@ -411,38 +403,28 @@ Body: {sanitize_prompt_text(req.bodySnippet)}
     all_emails = "\n\n".join(email_blocks)
 
     system_prompt = """You are an email classifier. Return ONLY valid JSON.
-
-Output format:
 {"results": [{"id": "<request id>", "category": "<exact tag name or empty string>", "response_required": <true|false>, "ai_summary": "<summary or empty string>", "ai_action": "<action or empty string>"}, ...]}
 
-Rules:
-1. category: pick exactly one from the provided list for each email, or "" if confidence < 95%.
-2. response_required: true only when sender is human, directly addressed, AND a reply/action is explicitly expected.
-3. CONDITIONAL FIELDS - ai_summary and ai_action:
-   - ONLY generate these fields if the selected category indicates the email requires human action or follow-up.
-   - For newsletters, marketing, automated alerts, notifications, read-only updates, and any non-actionable category: YOU MUST RETURN EMPTY STRINGS "" for both ai_summary and ai_action.
-   - Do NOT be helpful and summarize everything. Only summarize when the email truly requires a response or action from the user.
+AUTOMATED SENDER: From is a platform/service/system (noreply, notifications, billing, alerts, mailer, digest, newsletter, or a named product like GitHub/Slack/Stripe/Perplexity/Google/AWS/Notion/Figma) OR body is template-like, links to a dashboard/settings, or has no expectation of personal reply.
 
-4. When ai_summary IS required (actionable emails only):
-   - 12–15 words, active voice, lead with risk/ask.
-   - GOOD: "Production DB replication lag >30s, on-call needs escalation"
-   - GOOD: "Client threatening to churn over delayed feature delivery"
-   - GOOD: "2 invoices over $5K awaiting review; one is past due"
-   - BAD:  "The devops team sent an email about server issues"
-
-5. When ai_action IS required (actionable emails only):
-   - 2–3 words, imperative verb-first, pick from the approved list.
-   - GOOD: "Escalate now", "Reply with ETA", "Review & approve", "Investigate now"
-   - BAD:  "Action needed", "Please review", "See email", "Read email"
-
-Approved actions: "Escalate now", "Reply with ETA", "Review & approve", "Send feedback", "Confirm availability", "Approve invoices", "Read later", "Review billing", "Check activity", "Submit proposal", "Renew or review", "Investigate now"
+RULES
+1. category: pick exactly one from the provided list, or "" if confidence <95%.
+2. response_required: false for automated senders; true for human senders only if a reply/action is explicitly expected.
+3. "Pending Response": NEVER for automated senders. Human emails only.
+4. ai_summary + ai_action = "" for all non-actionable categories (newsletters, alerts, marketing, read-only).
+   Populate ONLY when category is "Action Needed" or "Pending Response" (human only).
+5. ai_summary: 12-15 words, active voice.
+   Automated → calm, state the in-app task. e.g. "Perplexity asks you to reconnect Google Drive in settings"
+   Human → urgent, lead with risk/ask. e.g. "Client threatening churn over delayed feature delivery"
+6. ai_action: 2-3 words, imperative verb-first. Pick from:
+   "Escalate now"|"Reply with ETA"|"Review & approve"|"Send feedback"|"Confirm availability"|"Approve invoices"|"Read later"|"Review billing"|"Check activity"|"Submit proposal"|"Renew or review"|"Investigate now"|"Reconnect now"
 """
 
     user_prompt = f"""<batch>
 {all_emails}
 </batch>
 
-CRITICAL: Only populate ai_summary and ai_action if the selected category is "Action Needed" or "Pending Response". For all other categories including marketing, automated alerts, and read-only emails, return empty strings "" for both fields.
+NOTE: Automated senders → never "Pending Response", response_required=false. Fill ai_summary+ai_action only for "Action Needed" or "Pending Response" (human only); else return "".
 
 Classify each email. Return only valid JSON."""
 
