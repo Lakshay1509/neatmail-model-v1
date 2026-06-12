@@ -252,11 +252,14 @@ RULES
 1. category: pick exactly one from the provided list, or "" if confidence <95%.
 2. response_required: false for automated senders; true for human senders only if a reply/action is explicitly expected.
 3. "Pending Response": NEVER for automated senders. Human emails only.
-4. ai_summary + ai_action = "" for all non-actionable categories (newsletters, alerts, marketing, read-only).
-   Populate ONLY when category is "Action Needed" or "Pending Response" (human only).
-5. ai_summary: 12-15 words, active voice.
-   Automated → calm, state the in-app task. e.g. "Perplexity asks you to reconnect Google Drive in settings"
-   Human → urgent, lead with risk/ask. e.g. "Client threatening churn over delayed feature delivery"
+4. ai_summary + ai_action rules:
+   - Always "" for non-actionable categories (newsletters, alerts, marketing, read-only).
+   - For "Pending Response" (human only): always populate.
+   - For "Action Needed": populate ONLY if the email requires a genuine deliberate decision or response — e.g. a human asking for approval, a contract to sign, a meeting to confirm, a critical service action (subscription expiring, account suspended, invoice due).
+     Leave as "" for self-explanatory one-click transactional triggers that need no thought: verification links, OTPs, password resets, 2FA codes, order confirmations, shipping notifications, or any automated message where the only "action" is clicking a single link with no real decision involved.
+5. ai_summary: 12-15 words, active voice. Only for emails passing rule 4.
+   Human → urgent, lead with the risk or ask. e.g. "Client threatening churn over delayed feature delivery"
+   Automated (critical) → calm, state the decision needed. e.g. "Stripe invoice overdue; pay now to avoid service suspension"
 6. ai_action: 2-3 words, imperative verb-first. Pick from:
    "Escalate now"|"Reply with ETA"|"Review & approve"|"Send feedback"|"Confirm availability"|"Approve invoices"|"Read later"|"Review billing"|"Check activity"|"Submit proposal"|"Renew or review"|"Investigate now"|"Reconnect now"
 """
@@ -280,7 +283,7 @@ Body: {email_data.bodySnippet}
 
 {few_shot_block}
 
-NOTE: Automated senders → never "Pending Response", response_required=false. Fill ai_summary+ai_action only for "Action Needed" or "Pending Response" (human only); else return "".
+NOTE: Automated senders → never "Pending Response", response_required=false. For "Action Needed": populate ai_summary+ai_action ONLY when a real decision is required (expiring subscription, suspended account, invoice due, human approval needed). Leave as "" for self-contained one-click triggers (verification links, OTPs, password resets, order confirmations).
 
 Classify the email. Return only valid JSON."""
 
@@ -411,11 +414,14 @@ RULES
 1. category: pick exactly one from the provided list, or "" if confidence <95%.
 2. response_required: false for automated senders; true for human senders only if a reply/action is explicitly expected.
 3. "Pending Response": NEVER for automated senders. Human emails only.
-4. ai_summary + ai_action = "" for all non-actionable categories (newsletters, alerts, marketing, read-only).
-   Populate ONLY when category is "Action Needed" or "Pending Response" (human only).
-5. ai_summary: 12-15 words, active voice.
-   Automated → calm, state the in-app task. e.g. "Perplexity asks you to reconnect Google Drive in settings"
-   Human → urgent, lead with risk/ask. e.g. "Client threatening churn over delayed feature delivery"
+4. ai_summary + ai_action rules:
+   - Always "" for non-actionable categories (newsletters, alerts, marketing, read-only).
+   - For "Pending Response" (human only): always populate.
+   - For "Action Needed": populate ONLY if the email requires a genuine deliberate decision or response — e.g. a human asking for approval, a contract to sign, a meeting to confirm, a critical service action (subscription expiring, account suspended, invoice due).
+     Leave as "" for self-explanatory one-click transactional triggers that need no thought: verification links, OTPs, password resets, 2FA codes, order confirmations, shipping notifications, or any automated message where the only "action" is clicking a single link with no real decision involved.
+5. ai_summary: 12-15 words, active voice. Only for emails passing rule 4.
+   Human → urgent, lead with the risk or ask. e.g. "Client threatening churn over delayed feature delivery"
+   Automated (critical) → calm, state the decision needed. e.g. "Stripe invoice overdue; pay now to avoid service suspension"
 6. ai_action: 2-3 words, imperative verb-first. Pick from:
    "Escalate now"|"Reply with ETA"|"Review & approve"|"Send feedback"|"Confirm availability"|"Approve invoices"|"Read later"|"Review billing"|"Check activity"|"Submit proposal"|"Renew or review"|"Investigate now"|"Reconnect now"
 """
@@ -424,7 +430,7 @@ RULES
 {all_emails}
 </batch>
 
-NOTE: Automated senders → never "Pending Response", response_required=false. Fill ai_summary+ai_action only for "Action Needed" or "Pending Response" (human only); else return "".
+NOTE: Automated senders → never "Pending Response", response_required=false. For "Action Needed": populate ai_summary+ai_action ONLY when a real decision is required (expiring subscription, suspended account, invoice due, human approval needed). Leave as "" for self-contained one-click triggers (verification links, OTPs, password resets, order confirmations).
 
 Classify each email. Return only valid JSON."""
 
