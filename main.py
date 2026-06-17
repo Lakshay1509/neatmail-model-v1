@@ -69,6 +69,26 @@ class EmailClassificationResult(BaseModel):
     ai_action: str = ""
 
 
+CLASSIFY_SYSTEM_PROMPT = """You are an email classifier. Return ONLY valid JSON.
+
+OVERRIDE RULE: User corrections in <user_corrections> take precedence over all general rules below. If the email closely resembles a correction, apply that label.
+
+Automated sender (noreply/notifications/billing/alerts/mailer/digest/newsletter, or any platform like GitHub/Slack/Stripe/Google, or template body with no personal reply expected):
+  \u2192 response_required=false, never "Pending Response", ai_summary+ai_action=""
+
+category \u2014 pick exactly one from the provided list. MUST return "" if confidence <95%.
+  "Pending Response" \u2192 human only. ALWAYS populate ai_summary+ai_action.
+  "Action Needed" \u2192 populate ai_summary+ai_action ONLY when email needs human judgment: approvals, contracts, meeting confirmations, expiring subscription, account suspended, invoice due.
+    Leave "" for one-click triggers: verification, OTP, password reset, 2FA, order confirmations, shipping notifications.
+  All other categories (newsletters, alerts, marketing, read-only) \u2192 ai_summary+ai_action="" ALWAYS.
+
+response_required \u2014 false for automated senders. true ONLY when a human sender explicitly expects a reply.
+
+ai_summary \u2014 12-15 words, active voice. Human emails \u2192 urgent, lead with risk/ask. Automated critical \u2192 calm, state the decision needed.
+
+ai_action \u2014 2-3 words, imperative verb-first from: Escalate now|Reply with ETA|Review & approve|Send feedback|Confirm availability|Approve invoices|Read later|Review billing|Check activity|Submit proposal|Renew or review|Investigate now|Reconnect now
+"""
+
 DIGEST_SENDER_RE = re.compile(r'digest@send\.neatmail\.app', re.IGNORECASE)
 
 
@@ -218,7 +238,7 @@ def build_few_shot_block(corrections: list[dict]) -> str:
         return ""
 
     lines = ["<user_corrections>"]
-    lines.append("The user has previously corrected these similar emails. Match these exactly if the current email is similar:")
+    lines.append("OVERRIDE RULE: If the current email closely resembles any correction below, the correction's label takes precedence over general rules.")
     for i, c in enumerate(corrections, 1):
         wrong_label = sanitize_prompt_text(c["wrong_label"])
         correct_label = sanitize_prompt_text(c["correct_label"])
@@ -241,30 +261,6 @@ def classify_email(email_data: EmailRequest) -> EmailClassificationResult:
         for t in tags
     ])
 
-    # Lean system prompt: role + output contract only.
-    # All dynamic context lives in the user prompt to avoid cross-message rule conflicts.
-    system_prompt = """You are an email classifier. Return ONLY valid JSON.
-{"category": "<exact tag name or empty string>", "response_required": <true|false>, "ai_summary": "<summary or empty string>", "ai_action": "<action or empty string>"}
-
-AUTOMATED SENDER: From is a platform/service/system (noreply, notifications, billing, alerts, mailer, digest, newsletter, or a named product like GitHub/Slack/Stripe/Perplexity/Google/AWS/Notion/Figma) OR body is template-like, links to a dashboard/settings, or has no expectation of personal reply.
-
-RULES
-1. category: pick exactly one from the provided list, or "" if confidence <95%.
-2. response_required: false for automated senders; true for human senders only if a reply/action is explicitly expected.
-3. "Pending Response": NEVER for automated senders. Human emails only.
-4. ai_summary + ai_action rules:
-   - Always "" for non-actionable categories (newsletters, alerts, marketing, read-only).
-   - For "Pending Response" (human only): always populate.
-   - For "Action Needed": populate ONLY if the email requires a genuine deliberate decision or response — e.g. a human asking for approval, a contract to sign, a meeting to confirm, a critical service action (subscription expiring, account suspended, invoice due).
-     Leave as "" for self-explanatory one-click transactional triggers that need no thought: verification links, OTPs, password resets, 2FA codes, order confirmations, shipping notifications, or any automated message where the only "action" is clicking a single link with no real decision involved.
-5. ai_summary: 12-15 words, active voice. Only for emails passing rule 4.
-   Human → urgent, lead with the risk or ask. e.g. "Client threatening churn over delayed feature delivery"
-   Automated (critical) → calm, state the decision needed. e.g. "Stripe invoice overdue; pay now to avoid service suspension"
-6. ai_action: 2-3 words, imperative verb-first. Pick from:
-   "Escalate now"|"Reply with ETA"|"Review & approve"|"Send feedback"|"Confirm availability"|"Approve invoices"|"Read later"|"Review billing"|"Check activity"|"Submit proposal"|"Renew or review"|"Investigate now"|"Reconnect now"
-"""
-
-    # User prompt is self-contained: email + all context needed to classify it.
     sensitivity_guidance = _get_sensitivity_guidance(email_data.sensitivity)
 
     user_prompt = f"""<email>
@@ -272,6 +268,8 @@ Subject: {email_data.subject}
 From: {email_data.from_}
 Body: {email_data.bodySnippet}
 </email>
+
+{few_shot_block}
 
 <categories>
 {tag_context}
@@ -281,14 +279,10 @@ Body: {email_data.bodySnippet}
 {sensitivity_guidance}
 </sensitivity_rule>
 
-{few_shot_block}
-
-NOTE: Automated senders → never "Pending Response", response_required=false. For "Action Needed": populate ai_summary+ai_action ONLY when a real decision is required (expiring subscription, suspended account, invoice due, human approval needed). Leave as "" for self-contained one-click triggers (verification links, OTPs, password resets, order confirmations).
-
-Classify the email. Return only valid JSON."""
+Classify. Return valid JSON."""
 
     messages = [
-        {"role": "system", "content": system_prompt},
+        {"role": "system", "content": CLASSIFY_SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt}
     ]
 
@@ -393,49 +387,26 @@ def classify_batch(requests: List[BatchEmailItem]) -> List[BatchEmailResult]:
 Subject: {sanitize_prompt_text(req.subject)}
 From: {sanitize_prompt_text(req.from_)}
 Body: {sanitize_prompt_text(req.bodySnippet)}
+{few_shot_block}
 <categories>
 {tag_context}
 </categories>
 <sensitivity_rule>
 {sensitivity_guidance}
 </sensitivity_rule>
-{few_shot_block}
 </email>"""
         email_blocks.append(block)
 
     all_emails = "\n\n".join(email_blocks)
 
-    system_prompt = """You are an email classifier. Return ONLY valid JSON.
-{"results": [{"id": "<request id>", "category": "<exact tag name or empty string>", "response_required": <true|false>, "ai_summary": "<summary or empty string>", "ai_action": "<action or empty string>"}, ...]}
-
-AUTOMATED SENDER: From is a platform/service/system (noreply, notifications, billing, alerts, mailer, digest, newsletter, or a named product like GitHub/Slack/Stripe/Perplexity/Google/AWS/Notion/Figma) OR body is template-like, links to a dashboard/settings, or has no expectation of personal reply.
-
-RULES
-1. category: pick exactly one from the provided list, or "" if confidence <95%.
-2. response_required: false for automated senders; true for human senders only if a reply/action is explicitly expected.
-3. "Pending Response": NEVER for automated senders. Human emails only.
-4. ai_summary + ai_action rules:
-   - Always "" for non-actionable categories (newsletters, alerts, marketing, read-only).
-   - For "Pending Response" (human only): always populate.
-   - For "Action Needed": populate ONLY if the email requires a genuine deliberate decision or response — e.g. a human asking for approval, a contract to sign, a meeting to confirm, a critical service action (subscription expiring, account suspended, invoice due).
-     Leave as "" for self-explanatory one-click transactional triggers that need no thought: verification links, OTPs, password resets, 2FA codes, order confirmations, shipping notifications, or any automated message where the only "action" is clicking a single link with no real decision involved.
-5. ai_summary: 12-15 words, active voice. Only for emails passing rule 4.
-   Human → urgent, lead with the risk or ask. e.g. "Client threatening churn over delayed feature delivery"
-   Automated (critical) → calm, state the decision needed. e.g. "Stripe invoice overdue; pay now to avoid service suspension"
-6. ai_action: 2-3 words, imperative verb-first. Pick from:
-   "Escalate now"|"Reply with ETA"|"Review & approve"|"Send feedback"|"Confirm availability"|"Approve invoices"|"Read later"|"Review billing"|"Check activity"|"Submit proposal"|"Renew or review"|"Investigate now"|"Reconnect now"
-"""
-
     user_prompt = f"""<batch>
 {all_emails}
 </batch>
 
-NOTE: Automated senders → never "Pending Response", response_required=false. For "Action Needed": populate ai_summary+ai_action ONLY when a real decision is required (expiring subscription, suspended account, invoice due, human approval needed). Leave as "" for self-contained one-click triggers (verification links, OTPs, password resets, order confirmations).
-
 Classify each email. Return only valid JSON."""
 
     messages = [
-        {"role": "system", "content": system_prompt},
+        {"role": "system", "content": CLASSIFY_SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt}
     ]
 
@@ -475,7 +446,7 @@ Classify each email. Return only valid JSON."""
             messages=messages,
             response_format=schema,
             temperature=0,
-            max_completion_tokens=2000,
+            max_completion_tokens=3000,
             seed=42,
         )
     except Exception as e:
