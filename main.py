@@ -306,14 +306,14 @@ Classify. Return valid JSON."""
     }
 
     try:
-        completion = client.chat.completions.create(
-            model="gpt-4.1-mini-2025-04-14",
-            messages=messages,
-            response_format=schema,
-            temperature=0,
-            max_completion_tokens=100,
-            seed=42,
-        )
+       completion = client.chat.completions.create(
+        model="gpt-5-nano",
+        messages=messages,
+        response_format=schema,
+        reasoning_effort="low",   
+        max_completion_tokens=500, 
+        seed=42,
+    )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"OpenAI API error: {str(e)}")
 
@@ -442,13 +442,13 @@ Classify each email. Return only valid JSON."""
 
     try:
         completion = client.chat.completions.create(
-            model="gpt-4.1-mini-2025-04-14",
-            messages=messages,
-            response_format=schema,
-            temperature=0,
-            max_completion_tokens=3000,
-            seed=42,
-        )
+        model="gpt-5-nano",
+        messages=messages,
+        response_format=schema,
+        reasoning_effort="low",   
+        max_completion_tokens=5000, 
+        seed=42,
+    )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"OpenAI API error: {str(e)}")
 
