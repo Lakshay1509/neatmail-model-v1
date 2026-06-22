@@ -43,6 +43,7 @@ SIMILARITY_THRESHOLD = 0.82
 class Tag(BaseModel):
     name: str
     description: Optional[str] = None
+    user_defined: bool = False
 
 class EmailRequest(BaseModel):
     user_id: str
@@ -72,6 +73,8 @@ class EmailClassificationResult(BaseModel):
 CLASSIFY_SYSTEM_PROMPT = """You are an email classifier. Return ONLY valid JSON.
 
 OVERRIDE RULE: User corrections in <user_corrections> take precedence over all general rules below. If the email closely resembles a correction, apply that label.
+
+CATEGORY PRIORITY: When choosing a category from <categories>, user-defined tags (marked with "[user-defined]") take precedence over system tags. First try to classify into a user-defined tag. Only if no user-defined tag fits should you fall back to a system tag.
 
 Automated sender (noreply/notifications/billing/alerts/mailer/digest/newsletter, or any platform like GitHub/Slack/Stripe/Google, or template body with no personal reply expected):
   \u2192 response_required=false, never "Pending Response", ai_summary+ai_action=""
@@ -256,10 +259,12 @@ def classify_email(email_data: EmailRequest) -> EmailClassificationResult:
     few_shot_block = build_few_shot_block(corrections)
 
     tags = email_data.tags
-    tag_context = "\n".join([
-        f"- {t.name}: {t.description.strip() if t.description and t.description.strip() else 'No description provided'}"
-        for t in tags
-    ])
+    tag_context_lines = []
+    for t in tags:
+        prefix = "[user-defined] " if t.user_defined else ""
+        desc = t.description.strip() if t.description and t.description.strip() else "No description provided"
+        tag_context_lines.append(f"- {prefix}{t.name}: {desc}")
+    tag_context = "\n".join(tag_context_lines)
 
     sensitivity_guidance = _get_sensitivity_guidance(email_data.sensitivity)
 
@@ -376,10 +381,12 @@ def classify_batch(requests: List[BatchEmailItem]) -> List[BatchEmailResult]:
         corrections = get_corrections(req.user_id, req.subject, req.bodySnippet)
         few_shot_block = build_few_shot_block(corrections)
 
-        tag_context = "\n".join([
-            f"- {t.name}: {t.description.strip() if t.description and t.description.strip() else 'No description provided'}"
-            for t in req.tags
-        ])
+        tag_context_lines = []
+        for t in req.tags:
+            prefix = "[user-defined] " if t.user_defined else ""
+            desc = t.description.strip() if t.description and t.description.strip() else "No description provided"
+            tag_context_lines.append(f"- {prefix}{t.name}: {desc}")
+        tag_context = "\n".join(tag_context_lines)
 
         sensitivity_guidance = _get_sensitivity_guidance(req.sensitivity)
 
