@@ -315,7 +315,7 @@ Classify. Return valid JSON."""
         model="gpt-5-nano",
         messages=messages,
         response_format=schema,
-        reasoning_effort="low",   
+        reasoning_effort="medium",   
         max_completion_tokens=500, 
         seed=42,
     )
@@ -452,7 +452,7 @@ Classify each email. Return only valid JSON."""
         model="gpt-5-nano",
         messages=messages,
         response_format=schema,
-        reasoning_effort="low",   
+        reasoning_effort="medium",   
         max_completion_tokens=5000, 
         seed=42,
     )
