@@ -315,8 +315,8 @@ Classify. Return valid JSON."""
         model="gpt-5-nano",
         messages=messages,
         response_format=schema,
-        reasoning_effort="medium",   
-        max_completion_tokens=500, 
+        reasoning_effort="medium",
+        max_completion_tokens=6000,
         seed=42,
     )
     except Exception as e:
@@ -324,7 +324,12 @@ Classify. Return valid JSON."""
 
     content = completion.choices[0].message.content
     if not content:
-        raise HTTPException(status_code=500, detail="No response from OpenAI")
+        finish_reason = completion.choices[0].finish_reason
+        reasoning_tokens = getattr(completion.usage.completion_tokens_details, "reasoning_tokens", None) if completion.usage else None
+        raise HTTPException(
+            status_code=500,
+            detail=f"No response from OpenAI (finish_reason={finish_reason}, reasoning_tokens={reasoning_tokens}, max_completion_tokens=6000)"
+        )
 
     try:
         parsed_json = json.loads(content)
@@ -452,8 +457,8 @@ Classify each email. Return only valid JSON."""
         model="gpt-5-nano",
         messages=messages,
         response_format=schema,
-        reasoning_effort="medium",   
-        max_completion_tokens=5000, 
+        reasoning_effort="medium",
+        max_completion_tokens=20000,
         seed=42,
     )
     except Exception as e:
@@ -461,7 +466,12 @@ Classify each email. Return only valid JSON."""
 
     content = completion.choices[0].message.content
     if not content:
-        raise HTTPException(status_code=500, detail="No response from OpenAI")
+        finish_reason = completion.choices[0].finish_reason
+        reasoning_tokens = getattr(completion.usage.completion_tokens_details, "reasoning_tokens", None) if completion.usage else None
+        raise HTTPException(
+            status_code=500,
+            detail=f"No response from OpenAI (finish_reason={finish_reason}, reasoning_tokens={reasoning_tokens}, max_completion_tokens=20000)"
+        )
 
     try:
         parsed_json = json.loads(content)
