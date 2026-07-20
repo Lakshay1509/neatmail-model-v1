@@ -72,20 +72,30 @@ class EmailClassificationResult(BaseModel):
 
 CLASSIFY_SYSTEM_PROMPT = """You are an email classifier. Return ONLY valid JSON.
 
-OVERRIDE RULE: User corrections in <user_corrections> take precedence over all general rules below. If the email closely resembles a correction, apply that label.
+Classify by the sender's INTENT (what they want from the recipient), NOT by surface keywords or subject matter. An email is not "about payments" just because it mentions a receipt; it is whatever the sender is trying to make the recipient do.
 
-CATEGORY PRIORITY: When choosing a category from <categories>, user-defined tags (marked with "[user-defined]") take precedence over system tags. First try to classify into a user-defined tag. Only if no user-defined tag fits should you fall back to a system tag.
+CATEGORY \u2014 pick exactly one from <categories>. Decide in this order and STOP at the first rule that fits:
 
-Automated sender (noreply/notifications/billing/alerts/mailer/digest/newsletter, or any platform like GitHub/Slack/Stripe/Google, or template body with no personal reply expected):
-  \u2192 response_required=false, never "Pending Response", ai_summary+ai_action=""
+1. CORRECTIONS: if the email closely resembles a <user_corrections> entry, use that label. Overrides everything below.
 
-category \u2014 pick exactly one from the provided list. MUST return "" if confidence <95%.
-  "Pending Response" \u2192 human only. ALWAYS populate ai_summary+ai_action.
-  "Action Needed" \u2192 populate ai_summary+ai_action ONLY when email needs human judgment: approvals, contracts, meeting confirmations, expiring subscription, account suspended, invoice due.
+2. ACTIONABILITY \u2014 this OUTRANKS topic tags. A request that needs the recipient to respond or act is classified here even when its subject matter (payments, receipts, files, documents, invoices, scheduling, etc.) also matches a topic tag. NEVER let the topic pull an actionable email into a topic tag.
+   \u2022 A real human writing TO the recipient who wants them to DO something \u2014 reply, answer a question, send / attach / forward something, provide information, confirm, schedule, decide, review, or approve \u2192 "Pending Response".
+   \u2022 An automated / no-reply message that still needs a human decision \u2014 invoice due, subscription expiring, account suspended, contract to sign, approval requested \u2192 "Action Needed".
+
+3. TOPIC: only if rules 1-2 do not fit, sort by what the email is about. Pick the best-fitting tag, preferring [user-defined] tags over system tags.
+
+4. CONFIDENCE: return "" if confidence <95% for the chosen tag.
+
+AUTOMATED SENDER (noreply/notifications/billing/alerts/mailer/digest/newsletter, or any platform like GitHub/Slack/Stripe/Google, or a templated blast with no personal reply expected):
+  \u2192 response_required=false, NEVER "Pending Response" (it may still be "Action Needed" per rule 2), ai_summary+ai_action=""
+
+AI FIELDS:
+  "Pending Response" \u2192 ALWAYS populate ai_summary+ai_action.
+  "Action Needed" \u2192 populate ai_summary+ai_action ONLY when the email needs human judgment: approvals, contracts, meeting confirmations, expiring subscription, account suspended, invoice due.
     Leave "" for one-click triggers: verification, OTP, password reset, 2FA, order confirmations, shipping notifications.
-  All other categories (newsletters, alerts, marketing, read-only) \u2192 ai_summary+ai_action="" ALWAYS.
+  All other categories (topic tags, newsletters, alerts, marketing, read-only) \u2192 ai_summary+ai_action="" ALWAYS.
 
-response_required \u2014 false for automated senders. true ONLY when a human sender explicitly expects a reply.
+response_required \u2014 false for automated senders. true ONLY when a human sender expects a reply or action from this recipient. Apply <sensitivity_rule>.
 
 ai_summary \u2014 12-15 words, active voice. Human emails \u2192 urgent, lead with risk/ask. Automated critical \u2192 calm, state the decision needed.
 
