@@ -78,16 +78,22 @@ CATEGORY \u2014 pick exactly one from <categories>. Decide in this order and STO
 
 1. CORRECTIONS: if the email closely resembles a <user_corrections> entry, use that label. Overrides everything below.
 
-2. ACTIONABILITY \u2014 this OUTRANKS topic tags. A request that needs the recipient to respond or act is classified here even when its subject matter (payments, receipts, files, documents, invoices, scheduling, etc.) also matches a topic tag. NEVER let the topic pull an actionable email into a topic tag.
+2. COLD OUTREACH \u2014 unsolicited mail whose real goal is to START a relationship that benefits the SENDER: sales / prospecting, vendor or agency pitches, partnership or collab proposals, recruiter pitches, investor and fundraising asks, event or booth meetups, demos, guest posts, sponsorships, backlinks, surveys, "quick 15 min intro call?".
+   Cold outreach is NEVER "Pending Response" and NEVER "Action Needed" \u2014 not even when it is hand-written, greets the recipient by name, references their company, product or ongoing project, or asks a direct question ("will you be at X next week?", "which time works for you?", "any feedback?"). A question asked to open a sales conversation is not a pending reply: the recipient owes this sender NOTHING, and silence costs them nothing.
+   Signals: no prior thread or live working relationship; the ask is for the recipient's TIME or ATTENTION rather than information, approval, or a document only they hold; the proposed meeting/call mainly benefits the sender; the mail lists a menu of services, certifications or capabilities; boilerplate warmth ("Hope you are doing well", "I hope your X is going well", "Looking forward to it"); offers to "find a convenient time" or drops a calendar link; sequence follow-ups ("just following up on my last email", "bumping this to the top of your inbox", "last try"); an unsubscribe / opt-out line on mail that looks 1:1.
+   \u2192 best-fitting topic tag (prefer a [user-defined] tag meant for sales / outreach / cold email; else the closest marketing or promotions tag; else ""), response_required=false, ai_summary+ai_action="".
+   NOT cold outreach \u2014 fall through to rule 3 when: the mail is a reply inside a thread the recipient started, or answers something the recipient requested (demo, quote, application, support ticket, signup); the sender is an inbound prospect or customer asking THE RECIPIENT for pricing, availability, or help; or the sender has a live working relationship with the recipient (colleague, client, vendor mid-engagement) and is asking for a decision, approval, document, or answer the recipient owns.
+
+3. ACTIONABILITY \u2014 this OUTRANKS topic tags. A request that needs the recipient to respond or act is classified here even when its subject matter (payments, receipts, files, documents, invoices, scheduling, etc.) also matches a topic tag. NEVER let the topic pull an actionable email into a topic tag.
    \u2022 A real human writing TO the recipient who wants them to DO something \u2014 reply, answer a question, send / attach / forward something, provide information, confirm, schedule, decide, review, or approve \u2192 "Pending Response".
    \u2022 An automated / no-reply message that still needs a human decision \u2014 invoice due, subscription expiring, account suspended, contract to sign, approval requested \u2192 "Action Needed".
 
-3. TOPIC: only if rules 1-2 do not fit, sort by what the email is about. Pick the best-fitting tag, preferring [user-defined] tags over system tags.
+4. TOPIC: only if rules 1-3 do not fit, sort by what the email is about. Pick the best-fitting tag, preferring [user-defined] tags over system tags.
 
-4. CONFIDENCE: return "" if confidence <95% for the chosen tag.
+5. CONFIDENCE: return "" if confidence <95% for the chosen tag.
 
 AUTOMATED SENDER (noreply/notifications/billing/alerts/mailer/digest/newsletter, or any platform like GitHub/Slack/Stripe/Google, or a templated blast with no personal reply expected):
-  \u2192 response_required=false, NEVER "Pending Response" (it may still be "Action Needed" per rule 2), ai_summary+ai_action=""
+  \u2192 response_required=false, NEVER "Pending Response" (it may still be "Action Needed" per rule 3), ai_summary+ai_action=""
 
 AI FIELDS:
   "Pending Response" \u2192 ALWAYS populate ai_summary+ai_action.
@@ -95,7 +101,7 @@ AI FIELDS:
     Leave "" for one-click triggers: verification, OTP, password reset, 2FA, order confirmations, shipping notifications.
   All other categories (topic tags, newsletters, alerts, marketing, read-only) \u2192 ai_summary+ai_action="" ALWAYS.
 
-response_required \u2014 false for automated senders. true ONLY when a human sender expects a reply or action from this recipient. Apply <sensitivity_rule>.
+response_required \u2014 false for automated senders and for cold outreach (rule 2), no matter how direct the ask sounds. true ONLY when a human sender expects a reply or action from this recipient AND the recipient actually owes it. Apply <sensitivity_rule>.
 
 ai_summary \u2014 12-15 words, active voice. Human emails \u2192 urgent, lead with risk/ask. Automated critical \u2192 calm, state the decision needed.
 
@@ -135,8 +141,9 @@ def match_category(parsed_category: str, tags: List[Tag]) -> str:
 
 
 def is_actionable_category(category: str) -> bool:
-    # "Pending Response" is only valid for human senders — the prompt hard-blocks it
-    # for automated senders, so by the time we reach here it is always a human email.
+    # "Pending Response" is only valid for human senders the recipient actually owes a
+    # reply to — the prompt hard-blocks it for automated senders (AUTOMATED SENDER) and
+    # for cold outreach (rule 2), so by the time we reach here it is a real obligation.
     return _normalize_tag(category) in {"actionneeded", "pendingresponse"}
 
 

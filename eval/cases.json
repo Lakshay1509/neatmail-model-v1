@@ -1,0 +1,316 @@
+{
+  "_comment": "Eval cases for the email classifier. Cases without a `tags` field inherit `default_tags`. Assertions: `category` = exact match (string, or list = any-of); `not_category` = prediction must NOT equal this (string, or list = none-of; used for counter-cases where the exact topic tag doesn't matter, only that it did NOT over-correct into e.g. 'Pending Response'); `response_required` = optional boolean check. Every case must set either `category` or `not_category`.",
+
+  "default_tags": [
+    { "name": "Pending Response", "user_defined": false, "description": "Emails from a real person that need you to reply or take a personal action." },
+    { "name": "Action Needed", "user_defined": false, "description": "Automated or system emails that still need a human decision (renew, approve, pay, resolve)." },
+    { "name": "Payments", "user_defined": true, "description": "Invoices, receipts, payment confirmations, and billing." },
+    { "name": "ValueFlow", "user_defined": true, "description": "Shared files, documents, decks, and deliverables." },
+    { "name": "Newsletters", "user_defined": false, "description": "Newsletters, digests, and subscribed reading." },
+    { "name": "Promotions", "user_defined": false, "description": "Marketing, sales, and promotional blasts." },
+    { "name": "Notifications", "user_defined": false, "description": "Automated platform notifications and alerts." }
+  ],
+
+  "cases": [
+    {
+      "id": "swiggy-receipt-ask",
+      "note": "SCREENSHOT 1/2. Human asking to attach a receipt. Mentions receipt/financial dept but is a direct ask -> must NOT be Payments.",
+      "email": {
+        "subject": "Urgent response required!",
+        "from": "Priya Nair <priya.nair@company.com>",
+        "bodySnippet": "Hey Lakshay, Can you attach the recent order receipt from the swiggy dineout, it is required for the internal records of the financial department. Regards",
+        "sensitivity": "if actionable"
+      },
+      "expect": { "category": "Pending Response", "response_required": true }
+    },
+    {
+      "id": "forward-latest-file",
+      "note": "SCREENSHOT 3. Human asking to forward a file. Mentions file but is a direct ask -> must NOT be ValueFlow.",
+      "email": {
+        "subject": "Urgent reply required!",
+        "from": "Aarav Gupta <aarav.g@company.com>",
+        "bodySnippet": "Hey Lakshay can you forward the latest file from yashvw25@gmail.com. Thanks and Regards",
+        "sensitivity": "if actionable"
+      },
+      "expect": { "category": "Pending Response", "response_required": true }
+    },
+    {
+      "id": "approve-vendor-payment",
+      "note": "Human asking recipient to approve a payment. Topic is Payments but it needs a human decision -> Pending Response.",
+      "email": {
+        "subject": "Need your OK on the vendor payment",
+        "from": "Sara Khan <sara.khan@company.com>",
+        "bodySnippet": "Hi Lakshay, can you approve the vendor payment of $2,300 so I can release it today? Let me know.",
+        "sensitivity": "if actionable"
+      },
+      "expect": { "category": "Pending Response", "response_required": true }
+    },
+    {
+      "id": "confirm-meeting-time",
+      "note": "Human asking to confirm a time. Direct ask -> Pending Response.",
+      "email": {
+        "subject": "Are we still on for tomorrow?",
+        "from": "Dev Mehta <dev@partnerco.com>",
+        "bodySnippet": "Hey, are we still on for the demo tomorrow at 3pm? Let me know if that still works for you.",
+        "sensitivity": "if actionable"
+      },
+      "expect": { "category": "Pending Response", "response_required": true }
+    },
+    {
+      "id": "send-signed-contract",
+      "note": "Human asking to send a signed contract (document topic) by a deadline -> Pending Response, not ValueFlow.",
+      "email": {
+        "subject": "Signed MSA?",
+        "from": "Legal - Nina Roy <nina.roy@vendor.com>",
+        "bodySnippet": "Could you send over the signed MSA PDF by end of day? We can't kick off the project without it.",
+        "sensitivity": "if actionable AND critical"
+      },
+      "expect": { "category": "Pending Response", "response_required": true }
+    },
+    {
+      "id": "question-needs-answer",
+      "note": "Human asking a direct question -> Pending Response.",
+      "email": {
+        "subject": "Quick question on the Q3 numbers",
+        "from": "Manager <rohit@company.com>",
+        "bodySnippet": "Which figure should I use for Q3 churn, the 4.1% or the revised 3.8%? Need it for the board deck.",
+        "sensitivity": "if actionable"
+      },
+      "expect": { "category": "Pending Response", "response_required": true }
+    },
+
+    {
+      "id": "cc-fyi-no-ask",
+      "note": "Human email but purely informational, no ask directed at recipient -> should NOT be Pending Response.",
+      "email": {
+        "subject": "FYI - deck is uploaded",
+        "from": "Kabir Sen <kabir@company.com>",
+        "bodySnippet": "Just so you know, I've uploaded the final deck to the shared drive. No action needed from your side, sharing for visibility.",
+        "sensitivity": "if actionable"
+      },
+      "expect": { "not_category": "Pending Response", "response_required": false }
+    },
+    {
+      "id": "stripe-receipt-automated",
+      "note": "Automated receipt. Read-only, no action -> NOT Pending Response, response_required false.",
+      "email": {
+        "subject": "Your receipt from Acme Inc. #2481-0093",
+        "from": "Stripe <receipts@stripe.com>",
+        "bodySnippet": "Thanks for your payment. Amount paid: $49.00. This is an automated receipt, no reply is needed.",
+        "sensitivity": "if actionable"
+      },
+      "expect": { "not_category": "Pending Response", "response_required": false }
+    },
+    {
+      "id": "drive-share-notification",
+      "note": "Automated file-share notification. Mentions a file -> topic/notification, NOT Pending Response.",
+      "email": {
+        "subject": "yashvw25 shared 'Q3 Deck' with you",
+        "from": "Google Drive <drive-shares-noreply@google.com>",
+        "bodySnippet": "yashvw25@gmail.com shared a file with you. Open in Drive to view. This message was sent automatically.",
+        "sensitivity": "if actionable"
+      },
+      "expect": { "not_category": "Pending Response", "response_required": false }
+    },
+    {
+      "id": "payments-newsletter",
+      "note": "Newsletter that talks about payments. Automated subscribed content -> topic, NOT Pending Response.",
+      "email": {
+        "subject": "This week in fintech: payment trends you should know",
+        "from": "Fintech Weekly <digest@fintechweekly.com>",
+        "bodySnippet": "Your weekly roundup: real-time payments, receipt automation, and the future of billing. Read on for the top 5 stories.",
+        "sensitivity": "if actionable"
+      },
+      "expect": { "not_category": "Pending Response", "response_required": false }
+    },
+    {
+      "id": "marketing-blast",
+      "note": "Promotional blast -> Promotions, NOT Pending Response.",
+      "email": {
+        "subject": "48 hours only: 50% off Pro plans",
+        "from": "SaaSTool <marketing@saastool.com>",
+        "bodySnippet": "Upgrade now and save 50%. Limited time offer, ends Sunday. Unsubscribe anytime.",
+        "sensitivity": "if actionable"
+      },
+      "expect": { "not_category": "Pending Response", "response_required": false }
+    },
+    {
+      "id": "github-notification",
+      "note": "Platform notification -> Notifications, NOT Pending Response.",
+      "email": {
+        "subject": "[acme/api] PR #412 was merged",
+        "from": "GitHub <notifications@github.com>",
+        "bodySnippet": "Your pull request #412 'fix: retry logic' was merged into main by octocat. View it on GitHub.",
+        "sensitivity": "if actionable"
+      },
+      "expect": { "not_category": "Pending Response", "response_required": false }
+    },
+
+    {
+      "id": "subscription-expiring",
+      "note": "Automated but needs a decision -> Action Needed, NOT Pending Response.",
+      "email": {
+        "subject": "Your subscription expires in 3 days",
+        "from": "Billing <billing@saastool.com>",
+        "bodySnippet": "Your Pro subscription will expire on July 23. Renew now to avoid losing access to your workspace.",
+        "sensitivity": "if actionable AND critical"
+      },
+      "expect": { "category": "Action Needed", "response_required": false }
+    },
+    {
+      "id": "invoice-due",
+      "note": "Automated invoice due -> Action Needed.",
+      "email": {
+        "subject": "Invoice #4501 is due tomorrow",
+        "from": "Accounts <invoicing@vendor.com>",
+        "bodySnippet": "This is a reminder that invoice #4501 for $1,200 is due on July 21. Please arrange payment to avoid late fees.",
+        "sensitivity": "if actionable AND critical"
+      },
+      "expect": { "category": ["Action Needed", "Payments"], "response_required": false }
+    },
+    {
+      "id": "account-suspended",
+      "note": "Automated security alert needing action -> Action Needed, NOT Pending Response.",
+      "email": {
+        "subject": "Action required: your account has been suspended",
+        "from": "Security <security@platform.com>",
+        "bodySnippet": "We detected unusual activity and suspended your account. Verify your identity to restore access.",
+        "sensitivity": "if actionable AND critical"
+      },
+      "expect": { "not_category": "Pending Response", "response_required": false }
+    },
+
+    {
+      "id": "otp-code",
+      "note": "One-click / read-only automated -> NOT Pending Response, no reply needed.",
+      "email": {
+        "subject": "Your verification code is 449102",
+        "from": "no-reply <no-reply@platform.com>",
+        "bodySnippet": "Your one-time verification code is 449102. It expires in 10 minutes. Do not share this code.",
+        "sensitivity": "if actionable"
+      },
+      "expect": { "not_category": "Pending Response", "response_required": false }
+    },
+    {
+      "id": "order-shipped",
+      "note": "Automated shipping notification -> topic/Notifications, NOT Pending Response.",
+      "email": {
+        "subject": "Your order #A1029 has shipped",
+        "from": "Shop <orders@shop.com>",
+        "bodySnippet": "Good news! Your order has shipped and will arrive by July 22. Track your package for the latest updates.",
+        "sensitivity": "if actionable"
+      },
+      "expect": { "not_category": "Pending Response", "response_required": false }
+    },
+    {
+      "id": "human-thanks-no-action",
+      "note": "Human reply that just says thanks, no ask -> NOT Pending Response.",
+      "email": {
+        "subject": "Re: the report",
+        "from": "Anjali <anjali@company.com>",
+        "bodySnippet": "Got it, thanks so much for turning this around so fast. Looks great, nothing else needed from me.",
+        "sensitivity": "if actionable"
+      },
+      "expect": { "not_category": "Pending Response", "response_required": false }
+    },
+
+    {
+      "id": "blackhat-cold-meetup",
+      "note": "SCREENSHOT 4. Vendor rep cold-pitching a meetup at a conference. Hand-written, uses the recipient's name and references their live CASA assessment, and ends with a direct 'which date and time work for you' -> still cold outreach, NOT Pending Response. This is the case that motivated the cold-outreach rule.",
+      "email": {
+        "subject": "Google CASA - will you be at Black Hat Las Vegas next week?",
+        "from": "Duy - CST Team TAC Security <CST1@tacsecurity.com>",
+        "bodySnippet": "Hello Lakshay, How are you doing? I hope your CASA assessment is going well. If you have any feedback about the process or need any support, please feel free to let me know. Also, I'll be in Las Vegas with our CASA team for Black Hat USA from August 3-6. If you're attending the event or will be in the city, I'd be happy to find a convenient time to meet, say hello, and hear about your experience with the assessment so we can better support your future projects. We can also discuss any other cybersecurity or compliance needs you may have, including SOC 2, HIPAA, ISO, GDPR, or penetration testing. If you're available, please let me know which date and time work best for you. I'd love to connect in person or online. Looking forward to it. Best, Duy Anh",
+        "sensitivity": "if actionable"
+      },
+      "expect": { "not_category": ["Pending Response", "Action Needed"], "response_required": false }
+    },
+    {
+      "id": "agency-cold-pitch",
+      "note": "Cold agency pitch with a service menu and a 15-min call ask -> NOT Pending Response.",
+      "email": {
+        "subject": "Quick question about your dev hiring",
+        "from": "Marcus Feld <marcus@growthlabs.io>",
+        "bodySnippet": "Hi Lakshay, I came across NeatMail and loved what you're building. We help startups like yours with offshore engineering, QA automation, and DevOps. Would you be open to a quick 15 minute call this week? Happy to work around your schedule.",
+        "sensitivity": "if actionable"
+      },
+      "expect": { "not_category": ["Pending Response", "Action Needed"], "response_required": false }
+    },
+    {
+      "id": "recruiter-cold-pitch",
+      "note": "Unsolicited recruiter outreach asking for availability -> NOT Pending Response.",
+      "email": {
+        "subject": "Senior Backend Engineer role - interested?",
+        "from": "Tanya Rao <tanya@hiretalent.co>",
+        "bodySnippet": "Hi Lakshay, your profile stood out for a Senior Backend Engineer opening with one of our clients. Comp is 45-60 LPA. Are you open to hearing more? Let me know a good time to connect this week.",
+        "sensitivity": "if actionable"
+      },
+      "expect": { "not_category": ["Pending Response", "Action Needed"], "response_required": false }
+    },
+    {
+      "id": "sales-followup-bump",
+      "note": "Sequence follow-up on an earlier cold email. Sounds urgent and personal but the recipient owes nothing -> NOT Pending Response.",
+      "email": {
+        "subject": "Re: following up",
+        "from": "Ethan Cole <ethan@pipelineapp.com>",
+        "bodySnippet": "Hi Lakshay, just bumping this to the top of your inbox in case it got buried. Did you get a chance to look at my last email about our onboarding platform? Even a quick yes or no would help me close the loop.",
+        "sensitivity": "if actionable"
+      },
+      "expect": { "not_category": ["Pending Response", "Action Needed"], "response_required": false }
+    },
+    {
+      "id": "partnership-proposal",
+      "note": "Unsolicited collab/co-marketing proposal -> NOT Pending Response.",
+      "email": {
+        "subject": "Partnership opportunity with NeatMail",
+        "from": "Riya Bhatt <riya@stackfusion.dev>",
+        "bodySnippet": "Hey Lakshay, we have an audience of 30k developers and think a joint webinar or newsletter swap could be a great fit for both of us. Would love to explore this. What does your calendar look like next week?",
+        "sensitivity": "if actionable"
+      },
+      "expect": { "not_category": ["Pending Response", "Action Needed"], "response_required": false }
+    },
+    {
+      "id": "cold-with-user-tag",
+      "note": "Same cold pitch, but the user has a [user-defined] 'Cold Email' tag. The prompt says to prefer a user-defined outreach tag -> must land in 'Cold Email', not Promotions and not Pending Response.",
+      "email": {
+        "subject": "Boost your SEO rankings in 30 days",
+        "from": "Sam Oyelaran <sam@rankboost.agency>",
+        "bodySnippet": "Hi Lakshay, I ran a quick audit of neatmail.app and found 12 issues holding back your rankings. I'd love to walk you through the findings on a short call. When are you free this week?",
+        "sensitivity": "if actionable",
+        "tags": [
+          { "name": "Pending Response", "user_defined": false, "description": "Emails from a real person that need you to reply or take a personal action." },
+          { "name": "Action Needed", "user_defined": false, "description": "Automated or system emails that still need a human decision (renew, approve, pay, resolve)." },
+          { "name": "Cold Email", "user_defined": true, "description": "Unsolicited sales, vendor, recruiter and partnership outreach from people you have no relationship with." },
+          { "name": "Payments", "user_defined": true, "description": "Invoices, receipts, payment confirmations, and billing." },
+          { "name": "Newsletters", "user_defined": false, "description": "Newsletters, digests, and subscribed reading." },
+          { "name": "Promotions", "user_defined": false, "description": "Marketing, sales, and promotional blasts." },
+          { "name": "Notifications", "user_defined": false, "description": "Automated platform notifications and alerts." }
+        ]
+      },
+      "expect": { "category": "Cold Email", "response_required": false }
+    },
+
+    {
+      "id": "inbound-prospect-pricing",
+      "note": "GUARD against over-correction. Stranger, no prior thread, but they want to BUY from the recipient -> the recipient owes a reply. Must stay Pending Response.",
+      "email": {
+        "subject": "Pricing for a 40-seat team?",
+        "from": "Nikhil Arora <nikhil@fabrictech.com>",
+        "bodySnippet": "Hi, we're evaluating NeatMail for our support team of about 40 people. Do you offer annual billing and is SSO included on the team plan? Could you send over pricing?",
+        "sensitivity": "if actionable"
+      },
+      "expect": { "category": "Pending Response", "response_required": true }
+    },
+    {
+      "id": "reply-to-my-demo-request",
+      "note": "GUARD against over-correction. Vendor rep, but replying to a demo the RECIPIENT requested and asking them to pick a slot -> Pending Response, not cold outreach.",
+      "email": {
+        "subject": "Re: your demo request - picking a time",
+        "from": "Alicia Gomez <alicia@datavault.com>",
+        "bodySnippet": "Hi Lakshay, thanks for requesting a demo of DataVault. I have Thursday 11am or Friday 4pm IST open. Which one works for you and should I include your engineering lead?",
+        "sensitivity": "if actionable"
+      },
+      "expect": { "category": "Pending Response", "response_required": true }
+    }
+  ]
+}
