@@ -42,13 +42,13 @@ for both Decisions requests and OpenRouter Chat Completions summaries.
   and `/classify` versus `/classify-batch`, while configuration is unchanged.
 - Configuration: `CLASSIFICATION_AB_ENABLED` (default false),
   `CLASSIFICATION_AB_TREATMENT_PERCENT` (default 50),
-  `CLASSIFICATION_AB_EXPERIMENT_ID` (default `clef-flash-v1`),
-  `OPENROUTER_API_KEY`, `OPENROUTER_DECISION_MODEL` (default `cloudflare/clef-flash`),
-  `OPENROUTER_DECISION_PROVIDER` (default `primeintellect`),
+  `CLASSIFICATION_AB_EXPERIMENT_ID` (default `jev-v2`),
+  `OPENROUTER_API_KEY`, `OPENROUTER_DECISION_MODEL` (default `typesafe/jev-1.13`),
+  `OPENROUTER_DECISION_PROVIDER` (default `auto`),
   and `OPENROUTER_SUMMARY_MODEL` (default `openai/gpt-5-nano`).
 - Additional settings: `AB_DATA_DIR` (local default `data/ab`),
   `AB_REPORT_DIR` (local default `reports`), `AB_COHORT_HMAC_KEY` (secret for
-  pseudonymous telemetry IDs), `AB_CATEGORY_MIN_PROBABILITY` (initially 0.95),
+  pseudonymous telemetry IDs), `AB_CATEGORY_MIN_PROBABILITY` (0.4, calibrated 2026-10-08),
   and `AB_NOUL_THRESHOLD` (initially 0.5).
 - Validate configuration explicitly. Enabled nonzero treatment requires an OpenRouter
   key; invalid settings must not silently turn the experiment into control.
@@ -95,7 +95,7 @@ Embeddings and Pinecone remain as currently implemented for both variants.
   and probability ranges. Do not convert malformed responses to plausible defaults.
 - Preserve sensitivity behavior, automated/cold-outreach reply suppression,
   and digest summary/action suppression.
-- Proposed starting category threshold: selected option probability >= 0.95;
+- Category threshold: selected option probability >= 0.4;
   otherwise return an empty-category result. Noul binary decisions use
   a configurable threshold initially 0.5. These are provisional policy settings,
   not claims of measured accuracy. Log probability and optional confidence separately; absence of confidence is valid.
@@ -333,13 +333,13 @@ python -m unittest discover -s tests -v
 python -m compileall -q main.py classification_ab.py ab_routing.py ab_metrics.py eval/report_ab.py
 uvicorn main:app --host 127.0.0.1 --port 8000
 python eval/run_eval.py --threshold 1.0 --json
-python eval/report_ab.py --data-dir data/ab --output-dir reports --experiment-id clef-flash-v1 --start 2026-10-08 --end 2026-10-15
+python eval/report_ab.py --data-dir data/ab --output-dir reports --experiment-id jev-v2 --start 2026-10-08 --end 2026-10-15
 ```
 
 Coolify container terminal example (dates must match the actual test window):
 
 ```sh
-python eval/report_ab.py --data-dir /app/data/ab --output-dir /app/reports --experiment-id clef-flash-v1 --start 2026-10-08 --end 2026-10-15
+python eval/report_ab.py --data-dir /app/data/ab --output-dir /app/reports --experiment-id jev-v2 --start 2026-10-08 --end 2026-10-15
 ```
 
 Write offline tests first for stable assignment, 0/100 endpoints, invalid config,
@@ -424,6 +424,15 @@ Provider changes also change the configuration fingerprint. Recalibrate on
 representative labeled emails before enabling: previous Jev results and mocked
 routing tests cannot prove Clef accuracy. The old Linux image verification
 predates this migration; current checks are recorded separately in task evidence.
+
+## Jev re-switch decision (2026-10-08)
+
+Benchmarked on 50 graded cases (`eval/clef_cases.json`), decisions only, one run:
+Jev 1.13 48/50, Clef Flash 42/50, gpt-5-nano control prompt 43/50; Jev p50 0.7s
+and ~9% of control's classification cost. Defaults switched to `typesafe/jev-1.13`,
+provider `auto`, experiment `jev-v2`, category threshold 0.4 (0.95 blanked correct
+topics; no wrong topic was blocked by any cutoff up to 0.40). Clef remains
+configurable via `OPENROUTER_DECISION_MODEL` with `OPENROUTER_DECISION_PROVIDER=primeintellect`.
 
 ## Official sources
 

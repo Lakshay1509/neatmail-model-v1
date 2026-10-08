@@ -22,15 +22,15 @@ def assign_variant(user_id: str, experiment_id: str, treatment_percent: int) -> 
 class Settings:
     enabled: bool = False
     percent: int = 50
-    experiment: str = 'clef-flash-v1'
+    experiment: str = 'jev-v2'
     key: str = ''
     cohort_key: str = ''
-    decision_model: str = 'cloudflare/clef-flash'
-    decision_provider: str = 'primeintellect'
+    decision_model: str = 'typesafe/jev-1.13'
+    decision_provider: str = 'auto'
     summary_model: str = 'openai/gpt-5-nano'
     data_dir: str = 'data/ab'
     report_dir: str = 'reports'
-    category_threshold: float = .95
+    category_threshold: float = .4
     noul_threshold: float = .5
 
     @classmethod
@@ -43,13 +43,13 @@ class Settings:
             raise ValueError('CLASSIFICATION_AB_ENABLED must be true or false')
         cfg = cls(
             enabled=flag == 'true', percent=int(env.get('CLASSIFICATION_AB_TREATMENT_PERCENT', '50')),
-            experiment=env.get('CLASSIFICATION_AB_EXPERIMENT_ID', 'clef-flash-v1'),
+            experiment=env.get('CLASSIFICATION_AB_EXPERIMENT_ID', 'jev-v2'),
             key=env.get('OPENROUTER_API_KEY', ''), cohort_key=env.get('AB_COHORT_HMAC_KEY', ''),
-            decision_model=env.get('OPENROUTER_DECISION_MODEL', 'cloudflare/clef-flash'),
-            decision_provider=env.get('OPENROUTER_DECISION_PROVIDER', 'primeintellect').strip().lower(),
+            decision_model=env.get('OPENROUTER_DECISION_MODEL', 'typesafe/jev-1.13'),
+            decision_provider=env.get('OPENROUTER_DECISION_PROVIDER', 'auto').strip().lower(),
             summary_model=env.get('OPENROUTER_SUMMARY_MODEL', 'openai/gpt-5-nano'),
             data_dir=env.get('AB_DATA_DIR', 'data/ab'), report_dir=env.get('AB_REPORT_DIR', 'reports'),
-            category_threshold=float(env.get('AB_CATEGORY_MIN_PROBABILITY', '.95')),
+            category_threshold=float(env.get('AB_CATEGORY_MIN_PROBABILITY', '.4')),
             noul_threshold=float(env.get('AB_NOUL_THRESHOLD', '.5')))
         if not 0 <= cfg.percent <= 100 or not cfg.experiment.strip():
             raise ValueError('Invalid experiment allocation or ID')

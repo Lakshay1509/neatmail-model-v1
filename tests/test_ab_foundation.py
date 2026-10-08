@@ -31,12 +31,13 @@ class FoundationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 Settings.from_env({'CLASSIFICATION_AB_TREATMENT_PERCENT': invalid})
 
-    def test_clef_defaults_and_legacy_model_setting_rejected(self):
+    def test_jev_defaults_and_legacy_model_setting_rejected(self):
         cfg = Settings.from_env({})
-        self.assertEqual(cfg.decision_model, 'cloudflare/clef-flash')
-        self.assertEqual(cfg.experiment, 'clef-flash-v1')
-        self.assertEqual(cfg.decision_provider, 'primeintellect')
-        other = Settings.from_env({'OPENROUTER_DECISION_PROVIDER': 'cloudflare'})
+        self.assertEqual(cfg.decision_model, 'typesafe/jev-1.13')
+        self.assertEqual(cfg.experiment, 'jev-v2')
+        self.assertEqual(cfg.decision_provider, 'auto')
+        self.assertEqual(cfg.category_threshold, .4)
+        other = Settings.from_env({'OPENROUTER_DECISION_PROVIDER': 'primeintellect'})
         self.assertNotEqual(cfg.fingerprint(), other.fingerprint())
         with self.assertRaises(ValueError):
             Settings.from_env({'OPENROUTER_DECISION_PROVIDER': 'unknown-provider'})

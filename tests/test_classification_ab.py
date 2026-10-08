@@ -92,12 +92,18 @@ class TreatmentTests(unittest.TestCase):
         self.assertNotIn('private-user', json.dumps(self.calls))
         self.assertEqual(self.calls[1][1]['provider'], {'require_parameters': True})
 
-    def test_clef_decision_model_and_optional_confidence(self):
+    def test_jev_decision_model_and_optional_confidence(self):
         def omit_confidence(response):
             for answer in response['answers'].values():
                 answer.pop('confidence', None)
         result = self.run_case(transform=omit_confidence)
         self.assertEqual(result['category'], 'Pending Response')
+        self.assertEqual(self.calls[0][1]['model'], 'typesafe/jev-1.13')
+        self.assertNotIn('provider', self.calls[0][1])
+
+    def test_pinned_provider_disables_fallbacks(self):
+        self.run_case(cfg=Settings(key='mock', decision_model='cloudflare/clef-flash',
+                                   decision_provider='primeintellect'))
         self.assertEqual(self.calls[0][1]['model'], 'cloudflare/clef-flash')
         self.assertEqual(self.calls[0][1]['provider'],
                          {'only': ['primeintellect'], 'allow_fallbacks': False})
@@ -154,7 +160,7 @@ class TreatmentTests(unittest.TestCase):
 
     def test_ambiguous_topic_abstains(self):
         def uncertain(response):
-            response['answers']['topic'].update(probabilities={'t0': .1, 't1': .1, 't2': .7, 'none': .1}, confidence=.6)
+            response['answers']['topic'].update(probabilities={'t0': .2, 't1': .2, 't2': .35, 'none': .25}, confidence=.35)
         result = self.run_case(values={'obligation': 0, 'reply': 0}, transform=uncertain)
         self.assertEqual(result['category'], '')
         self.assertEqual(len(self.calls), 1)

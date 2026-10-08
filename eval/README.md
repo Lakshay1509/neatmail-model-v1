@@ -53,13 +53,13 @@ Assertions under `expect`:
 | `not_category`      | prediction must **not** equal this; a **list** means none-of   |
 | `response_required` | optional boolean check                                          |
 
-## Clef Flash A/B experiment
+## Jev A/B experiment
 
 The experiment is disabled by default. When enabled, stable SHA-256 assignment
 routes approximately 50% of users to each variant; email volume need not be 50/50.
 The control uses the existing OpenAI `gpt-5-nano` prompt. Treatment uses
-OpenRouter `cloudflare/clef-flash` for decisions and `openai/gpt-5-nano` only for
-needed summary/action text. Failures in Clef Flash or summary generation fall back to
+OpenRouter `typesafe/jev-1.13` for decisions and `openai/gpt-5-nano` only for
+needed summary/action text. Failures in Jev or summary generation fall back to
 the original OpenAI classifier; metrics retain treatment assignment and failure
 stage. No user-facing JSON fields have changed.
 
@@ -72,25 +72,38 @@ python -c "import secrets; print(secrets.token_hex(32))"
 
 Keep the HMAC key, experiment ID, percentage, model names and thresholds stable
 for the week. Changing policy/configuration creates a separate report segment.
-Model confidence is not measured accuracy. The 0.95 category-probability and
-0.5 binary thresholds are starting policies; calibrate on labeled examples
-before enabling live traffic. Clef Flash composite decisions also use binary answers,
-so the category threshold is not a 95% guarantee for the entire pipeline.
+Model confidence is not measured accuracy. The 0.40 category-probability and
+0.5 binary thresholds are policies; recalibrate when the model changes. Decisions
+also use binary answers, so the category threshold is not a guarantee for the
+entire pipeline. Choice confidence is optional; the cutoff uses selected-option
+probabilities.
 
-The classifier is pinned to **Prime Intellect** (`primeintellect`) with provider
-fallbacks disabled. Its advertised context is 16,384 tokens, priced at $0.021
-per million input tokens (zero output-token price at documentation check).
-Cloudflare Workers AI currently documents truncation to roughly the first 2,000
-text-state tokens; pinning avoids that provider. These are provider limits and
-prices, not measured email accuracy. Each treatment email has its own Decisions
-request, including corrections and questions; batches are processed with bounded
-concurrency rather than one ten-email Decisions prompt.
+**Benchmark (2026-10-08)** on `eval/clef_cases.json` (50 cases, 5 difficulty levels),
+one run each, no corrections, decisions only (summary call excluded from cost):
 
-Remove obsolete `OPENROUTER_JEV_MODEL` from local/Coolify variables; startup
-rejects it with migration guidance. Use `clef-flash-v1` as a fresh experiment ID
-so previous Jev observations are not pooled. Changing the ID can reassign users;
-assignment stays stable within the new experiment. Choice confidence is optional;
-the cutoff uses selected-option probabilities.
+| | Jev 1.13 | Clef Flash | gpt-5-nano (control prompt) |
+|---|---|---|---|
+| Correct | **48/50** | 42/50 | 43/50 |
+| p50 / p95 latency | 0.7s / 2.1s | 0.9s / 2.1s | 14.3s / 28.2s |
+| Cost per 50 emails | $0.0024 | $0.0013 | $0.027 |
+
+The 0.40 cutoff: raising it never blocked a wrong topic in `cases.json` or
+`clef_cases.json`, only blanked correct ones; nothing is lost at 0.40 or below (at
+0.95 Clef scored 25/50). Lowest observed selected-topic probability was 0.32;
+chance with 6-8 tags is ~0.15. The same threshold also gates stored-correction
+overrides, which this benchmark did not exercise.
+
+`OPENROUTER_DECISION_PROVIDER=auto` lets OpenRouter route Jev. To run Clef Flash
+instead, set `OPENROUTER_DECISION_MODEL=cloudflare/clef-flash` and pin
+`OPENROUTER_DECISION_PROVIDER=primeintellect` (Cloudflare Workers AI documents
+truncation to roughly the first 2,000 text-state tokens), with its own experiment ID.
+Each treatment email has its own Decisions request, including corrections and
+questions; batches are processed with bounded concurrency.
+
+`OPENROUTER_JEV_MODEL` is obsolete; startup rejects it. Use
+`OPENROUTER_DECISION_MODEL`. Experiment `jev-v2` is fresh so `jev-v1` and
+`clef-flash-v1` observations are not pooled. Changing the ID can reassign users;
+assignment stays stable within the new experiment.
 
 ### Coolify
 
@@ -115,9 +128,10 @@ Set these **runtime** environment variables in Coolify:
 ```dotenv
 CLASSIFICATION_AB_ENABLED=true
 CLASSIFICATION_AB_TREATMENT_PERCENT=50
-CLASSIFICATION_AB_EXPERIMENT_ID=clef-flash-v1
-OPENROUTER_DECISION_MODEL=cloudflare/clef-flash
-OPENROUTER_DECISION_PROVIDER=primeintellect
+CLASSIFICATION_AB_EXPERIMENT_ID=jev-v2
+OPENROUTER_DECISION_MODEL=typesafe/jev-1.13
+OPENROUTER_DECISION_PROVIDER=auto
+AB_CATEGORY_MIN_PROBABILITY=0.4
 AB_DATA_DIR=/app/data/ab
 AB_REPORT_DIR=/app/reports
 ```
@@ -160,7 +174,7 @@ For the second option the HMAC key and measurement storage remain required.
 From the Coolify container terminal, adjusting dates to the actual week:
 
 ```sh
-python eval/report_ab.py --data-dir /app/data/ab --output-dir /app/reports --experiment-id clef-flash-v1 --start 2026-10-08 --end 2026-10-15
+python eval/report_ab.py --data-dir /app/data/ab --output-dir /app/reports --experiment-id jev-v2 --start 2026-10-08 --end 2026-10-15
 ```
 
 This writes private server files:
@@ -256,6 +270,7 @@ GPT-5 nano deprecated; the requested model is retained rather than replaced.
 
 Official integration references:
 
+- [Jev 1.13 model](https://openrouter.ai/typesafe/jev-1.13)
 - [Clef Flash model and provider truncation notice](https://openrouter.ai/cloudflare/clef-flash)
 - [Live Clef provider limits and prices](https://openrouter.ai/api/v1/models/cloudflare/clef-flash/endpoints)
 - [OpenRouter Decisions API](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-questions-and-answers-request)
