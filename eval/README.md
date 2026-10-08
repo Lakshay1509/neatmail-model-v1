@@ -205,6 +205,21 @@ secrets. Require the `verify` check before merging/deploying. Coolify's automati
 Git deployment does not by itself guarantee that CI has finished successfully;
 deploy the verified commit manually or configure your own CI-success gate.
 
+For local Podman verification, use Docker image format so Podman retains the
+Dockerfile's `HEALTHCHECK` (its default OCI format drops it):
+
+```sh
+podman build --format docker --tag localhost/neatmail:production-check .
+podman run --rm --network none --entrypoint python localhost/neatmail:production-check -m unittest discover -s tests -v
+podman run --rm --network none --entrypoint python localhost/neatmail:production-check -m pip check
+```
+
+On Windows, a running Podman WSL machine is required. If the Windows remote
+connection drops during a build, the same command can run directly inside that
+machine's WSL distribution. The final local production pass verified the Linux
+build, image health check, mocked API, report CLI and named-volume persistence;
+it did not verify live provider access or the actual Coolify server.
+
 ```sh
 python -m unittest discover -s tests -v
 python -m compileall -q main.py classification_ab.py ab_routing.py ab_metrics.py eval/report_ab.py

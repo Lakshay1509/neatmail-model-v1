@@ -28,11 +28,21 @@ Verification:
   in the pinned packages. This is an advisory check, not a complete supply-chain
   guarantee; base-image OS packages require the deployment image scan.
 - Compilation and `git diff --check` pass.
+- Podman/WSL Linux image build passed using Docker format (image
+  `localhost/neatmail:production-check`). All 29 tests and `pip check` passed
+  inside the built image with networking disabled.
+- The built image retains its Docker health check. A running Linux container
+  passed that exact check and API auth/response verification with mocked providers.
+- The actual report CLI produced Markdown/JSON on named volumes; a replacement
+  container read both reports and the measurement ledger successfully. Temporary
+  test containers and volumes were removed after verification.
+- Inspection inside the image verified local `.env`, `.git`, private reports,
+  and agent configuration were excluded by `.dockerignore`.
 
 Deployment verification still required:
 
-- Docker is unavailable in this local environment. The Docker build and Linux
-  runtime need to pass CI/Coolify before deployment. CI has been added, not run remotely.
+- Local Linux container verification now passes with Podman. CI has been added,
+  not run remotely; verify the selected commit's CI/Coolify build before deployment.
 - Verify live account/model access and labeled email quality in staging.
 - Verify both Coolify volume mounts survive container replacement and are writable;
   back them up. Maintain one deployment server.
