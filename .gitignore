@@ -175,6 +175,9 @@ pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/python
 
+.agents
+.claude
+
 # Private experiment measurements and generated reports
 data/ab/
 reports/
