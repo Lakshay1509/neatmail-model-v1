@@ -174,3 +174,11 @@ poetry.toml
 pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/python
+
+# Private experiment measurements and generated reports
+data/ab/
+reports/
+
+# Keep deployment secret variants out of version control
+.env.*
+!.env.example

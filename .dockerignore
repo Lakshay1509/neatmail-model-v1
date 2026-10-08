@@ -30,6 +30,12 @@ build/
 dist/
 *.egg-info/
 
+# Private measurements and local agent configuration
+data/ab/
+reports/
+.agents/
+.claude/
+
 # OS files
 .DS_Store
 Thumbs.db

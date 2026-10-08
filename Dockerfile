@@ -16,4 +16,9 @@ RUN pip install --no-cache-dir --upgrade pip \
 COPY . .
 EXPOSE 8000
 
+# Python is already present; no curl/wget or paid provider request is needed.
+# Coolify uses the image HEALTHCHECK in preference to its dashboard check.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
+    CMD python -c "import urllib.request; r=urllib.request.urlopen('http://127.0.0.1:8000/openapi.json', timeout=4); assert r.status == 200"
+
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
