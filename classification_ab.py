@@ -1,4 +1,4 @@
-"""Experiment settings and Jev classification; no imports from application startup."""
+"""Experiment settings and decision-model classification; no application startup imports."""
 import hashlib
 import json
 import math
@@ -22,10 +22,11 @@ def assign_variant(user_id: str, experiment_id: str, treatment_percent: int) -> 
 class Settings:
     enabled: bool = False
     percent: int = 50
-    experiment: str = 'jev-v1'
+    experiment: str = 'clef-flash-v1'
     key: str = ''
     cohort_key: str = ''
-    jev_model: str = 'typesafe/jev-1.13'
+    decision_model: str = 'cloudflare/clef-flash'
+    decision_provider: str = 'primeintellect'
     summary_model: str = 'openai/gpt-5-nano'
     data_dir: str = 'data/ab'
     report_dir: str = 'reports'
@@ -35,20 +36,25 @@ class Settings:
     @classmethod
     def from_env(cls, env=None):
         env = os.environ if env is None else env
+        if 'OPENROUTER_JEV_MODEL' in env:
+            raise ValueError('Remove obsolete OPENROUTER_JEV_MODEL; use OPENROUTER_DECISION_MODEL')
         flag = env.get('CLASSIFICATION_AB_ENABLED', 'false').lower()
         if flag not in {'true', 'false'}:
             raise ValueError('CLASSIFICATION_AB_ENABLED must be true or false')
         cfg = cls(
             enabled=flag == 'true', percent=int(env.get('CLASSIFICATION_AB_TREATMENT_PERCENT', '50')),
-            experiment=env.get('CLASSIFICATION_AB_EXPERIMENT_ID', 'jev-v1'),
+            experiment=env.get('CLASSIFICATION_AB_EXPERIMENT_ID', 'clef-flash-v1'),
             key=env.get('OPENROUTER_API_KEY', ''), cohort_key=env.get('AB_COHORT_HMAC_KEY', ''),
-            jev_model=env.get('OPENROUTER_JEV_MODEL', 'typesafe/jev-1.13'),
+            decision_model=env.get('OPENROUTER_DECISION_MODEL', 'cloudflare/clef-flash'),
+            decision_provider=env.get('OPENROUTER_DECISION_PROVIDER', 'primeintellect').strip().lower(),
             summary_model=env.get('OPENROUTER_SUMMARY_MODEL', 'openai/gpt-5-nano'),
             data_dir=env.get('AB_DATA_DIR', 'data/ab'), report_dir=env.get('AB_REPORT_DIR', 'reports'),
             category_threshold=float(env.get('AB_CATEGORY_MIN_PROBABILITY', '.95')),
             noul_threshold=float(env.get('AB_NOUL_THRESHOLD', '.5')))
         if not 0 <= cfg.percent <= 100 or not cfg.experiment.strip():
             raise ValueError('Invalid experiment allocation or ID')
+        if not cfg.decision_model.strip() or cfg.decision_provider not in {'primeintellect', 'cloudflare', 'auto'}:
+            raise ValueError('Invalid decision model or provider')
         for threshold in (cfg.category_threshold, cfg.noul_threshold):
             if not math.isfinite(threshold) or not 0 <= threshold <= 1:
                 raise ValueError('Thresholds must be finite probabilities')
@@ -60,8 +66,8 @@ class Settings:
 
     def fingerprint(self):
         # Do not include secrets, disk paths or raw user identifiers.
-        values = [self.experiment, self.percent, self.jev_model, self.summary_model,
-                  self.category_threshold, self.noul_threshold, 'policy-v1']
+        values = [self.experiment, self.percent, self.decision_model, self.decision_provider, self.summary_model,
+                  self.category_threshold, self.noul_threshold, 'policy-v2']
         for filename in ('classification_ab.py', 'ab_routing.py', 'main.py'):
             from pathlib import Path
             path = Path(__file__).with_name(filename)
@@ -159,7 +165,7 @@ class Treatment:
         if not email.tags:
             return empty
         if len(email.tags) + 1 > 255:
-            raise TreatmentError('jev', 'too_many_tags')
+            raise TreatmentError('classifier', 'too_many_tags')
         tag_map = {f't{i}': tag for i, tag in enumerate(email.tags)}
         criteria = {key: {'name': tag.name, 'description': tag.description or '',
                          'user_defined': tag.user_defined} for key, tag in tag_map.items()}
@@ -199,8 +205,12 @@ class Treatment:
                                 'A matching correction overrides general category rules.',
                 'criteria': {**state['corrections'], 'none': 'No correction closely matches.'}}
         deadline = time.monotonic() + 60
-        response = self._post('jev', 'https://openrouter.ai/api/alpha/decisions',
-                              dict(model=cfg.jev_model, state=state, questions=questions), deadline, observer)
+        payload = dict(model=cfg.decision_model, state=state, questions=questions)
+        if cfg.decision_provider != 'auto':
+            # https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-questions-and-answers-request
+            payload['provider'] = {'only': [cfg.decision_provider], 'allow_fallbacks': False}
+        response = self._post('classifier', 'https://openrouter.ai/api/alpha/decisions',
+                              payload, deadline, observer)
         try:
             answers = response['answers']
             signals = {}
@@ -221,7 +231,8 @@ class Treatment:
                         self._probability(p)
                     if not math.isclose(sum(probabilities.values()), 1, abs_tol=.01):
                         raise ValueError('Invalid distribution')
-                    self._probability(answer['confidence'])
+                    if 'confidence' in answer:
+                        self._probability(answer['confidence'])
                     if probabilities[answer['choice']] < max(probabilities.values()):
                         raise ValueError('Choice is not highest probability')
             # Log only internal option IDs and numerical evidence, never custom tag text.
@@ -229,7 +240,7 @@ class Treatment:
             for key, question in questions.items():
                 answer = answers[key]
                 safe_answers[key] = ({'noul': answer['noul']} if question['type'] == 'noul' else
-                                     {name: answer[name] for name in ('choice', 'probabilities', 'confidence')})
+                                     {name: answer[name] for name in ('choice', 'probabilities', 'confidence') if name in answer})
             observer(stage='evidence', answers=safe_answers, status='ok')
             category = ''
             correction = answers.get('correction')
@@ -251,7 +262,7 @@ class Treatment:
             needs_summary = needs_summary and not re.search(r'digest@send\.neatmail\.app', email.from_, re.I)
             result = dict(empty, category=category, response_required=required)
         except (KeyError, TypeError, ValueError, AttributeError) as exc:
-            raise TreatmentError('jev') from exc
+            raise TreatmentError('classifier') from exc
         if needs_summary:
             schema = {'type': 'object', 'properties': {'ai_summary': {'type': 'string'},
                       'ai_action': {'type': 'string', 'enum': ACTIONS}},

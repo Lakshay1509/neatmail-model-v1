@@ -1,12 +1,12 @@
-# Spec: Jev classification A/B experiment
+# Spec: Clef Flash classification A/B experiment
 
-Status: revised after documentation/code review; runtime implementation pending.
+Status: implemented, offline verified; disabled pending live calibration and deployment checks.
 Documentation checked: 2026-10-08.
 
 ## Objective
 
 Implement working traffic routing in the existing FastAPI application to compare
-the current GPT-5 nano classifier with Jev classification followed by GPT-5 nano
+the current GPT-5 nano classifier with Clef Flash classification followed by GPT-5 nano
 only when summary/action generation is needed. Preserve the public response
 contracts and per-user correction retrieval.
 
@@ -15,19 +15,19 @@ contracts and per-user correction retrieval.
 - Working code wired into the API, not documentation alone.
 - 50% control / 50% treatment, stable per user.
 - Control continues calling OpenAI directly.
-- Treatment calls Jev and GPT-5 nano through OpenRouter.
+- Treatment calls Clef Flash and GPT-5 nano through OpenRouter.
 - Deployment is one server/container on Coolify with persistent disk.
 - Weekly reports belong in `reports/` as Markdown and JSON.
 
 Assignment balances users approximately, not exactly half of email volume: users
 send different numbers of emails. Since provider and architecture both change,
-this experiment measures the whole new path, not Jev alone.
+this experiment measures the whole new path, not Clef Flash alone.
 
 ## Tech stack
 
 Existing dependencies: FastAPI 0.135.2, Pydantic 2.12.5, OpenAI SDK 2.30.0,
 httpx 0.28.1, Pinecone 8.1.0. No new dependency is proposed. Use existing httpx
-for Decisions requests and the OpenAI-compatible client for OpenRouter summaries.
+for both Decisions requests and OpenRouter Chat Completions summaries.
 
 ## Behavior
 
@@ -42,8 +42,9 @@ for Decisions requests and the OpenAI-compatible client for OpenRouter summaries
   and `/classify` versus `/classify-batch`, while configuration is unchanged.
 - Configuration: `CLASSIFICATION_AB_ENABLED` (default false),
   `CLASSIFICATION_AB_TREATMENT_PERCENT` (default 50),
-  `CLASSIFICATION_AB_EXPERIMENT_ID` (default `jev-v1`),
-  `OPENROUTER_API_KEY`, `OPENROUTER_JEV_MODEL` (default `typesafe/jev-1.13`),
+  `CLASSIFICATION_AB_EXPERIMENT_ID` (default `clef-flash-v1`),
+  `OPENROUTER_API_KEY`, `OPENROUTER_DECISION_MODEL` (default `cloudflare/clef-flash`),
+  `OPENROUTER_DECISION_PROVIDER` (default `primeintellect`),
   and `OPENROUTER_SUMMARY_MODEL` (default `openai/gpt-5-nano`).
 - Additional settings: `AB_DATA_DIR` (local default `data/ab`),
   `AB_REPORT_DIR` (local default `reports`), `AB_COHORT_HMAC_KEY` (secret for
@@ -72,7 +73,7 @@ Embeddings and Pinecone remain as currently implemented for both variants.
   fields, sensitivity, tag definitions, and that user's relevant corrections.
   Do not send the user ID or experiment assignment to model providers.
 - Call `POST https://openrouter.ai/api/alpha/decisions` with Bearer authentication,
-  the pinned Jev model, `state`, and named typed `questions`.
+  the pinned Clef Flash model, `state`, and named typed `questions`.
 - Decompose policy into focused questions: correction applicability, automated
   sender, cold outreach, actual reply/action obligation, topic selection, and
   human judgment needed for summary generation. Use Choice and Noul answers.
@@ -88,7 +89,7 @@ Embeddings and Pinecone remain as currently implemented for both variants.
 - Use internal option IDs to avoid collision between a user tag and the unmatched
   sentinel. Omit correction questions when there are no usable corrections. Empty
   tags yield an unmatched category; never force a Choice with invalid option count.
-  Respect the documented maximum of 255 Choice options, including sentinels;
+  Retain an application safety cap of 255 Choice options, including sentinels;
   oversized/unsupported requests take the recorded fallback path, not truncation.
 - Validate answer types, required fields, allowed choices, finite probabilities,
   and probability ranges. Do not convert malformed responses to plausible defaults.
@@ -97,7 +98,7 @@ Embeddings and Pinecone remain as currently implemented for both variants.
 - Proposed starting category threshold: selected option probability >= 0.95;
   otherwise return an empty-category result. Noul binary decisions use
   a configurable threshold initially 0.5. These are provisional policy settings,
-  not claims of measured accuracy. Log probability and confidence separately.
+  not claims of measured accuracy. Log probability and optional confidence separately; absence of confidence is valid.
 - The current control's 95% condition is a prompt instruction, not a numeric
   measurement. The treatment cutoff is not established as equivalent. Test
   thresholds on a calibration set before the live experiment and freeze them;
@@ -151,7 +152,7 @@ Prepared corrections must be passed into the control fallback rather than embedd
 and queried again. Capture usage immediately after every model response, before
 validating its content, so malformed/empty completions still count as expenditure.
 Summary-stage failure follows the same recorded full-control fallback policy;
-the report distinguishes it from Jev failure and accounts for both stages.
+the report distinguishes it from Clef Flash failure and accounts for both stages.
 Low-confidence classifications return empty category rather than automatically
 calling another classifier; this keeps summary-only nano routing in scope.
 
@@ -174,7 +175,7 @@ calling another classifier; this keeps summary-only nano routing in scope.
   batches. Instrument partial failure even if the public batch request fails.
 - Splitting a batch reduces control batch size and can change cost and quality.
   Report single and batch endpoints separately, including control sub-batch size;
-  do not interpret that effect as intrinsic Jev model performance.
+  do not interpret that effect as intrinsic Clef Flash model performance.
 
 ## Measurement
 
@@ -291,7 +292,7 @@ Reports contain descriptive treatment-minus-control differences for matching
 configuration and endpoint segments; incomplete observations cannot establish a
 complete cost per item.
 
-Verified with 29 offline tests, compilation, diff checks, a regression mutation
+Verified with 32 offline tests, compilation, diff checks, a regression mutation
 check, and the actual report CLI using synthetic data. Live model calibration,
 account/model access and Coolify volume persistence remain operator checks before
 enabling. No deployment or paid model call was performed.
@@ -332,13 +333,13 @@ python -m unittest discover -s tests -v
 python -m compileall -q main.py classification_ab.py ab_routing.py ab_metrics.py eval/report_ab.py
 uvicorn main:app --host 127.0.0.1 --port 8000
 python eval/run_eval.py --threshold 1.0 --json
-python eval/report_ab.py --data-dir data/ab --output-dir reports --experiment-id jev-v1 --start 2026-10-08 --end 2026-10-15
+python eval/report_ab.py --data-dir data/ab --output-dir reports --experiment-id clef-flash-v1 --start 2026-10-08 --end 2026-10-15
 ```
 
 Coolify container terminal example (dates must match the actual test window):
 
 ```sh
-python eval/report_ab.py --data-dir /app/data/ab --output-dir /app/reports --experiment-id jev-v1 --start 2026-10-08 --end 2026-10-15
+python eval/report_ab.py --data-dir /app/data/ab --output-dir /app/reports --experiment-id clef-flash-v1 --start 2026-10-08 --end 2026-10-15
 ```
 
 Write offline tests first for stable assignment, 0/100 endpoints, invalid config,
@@ -403,25 +404,40 @@ thresholds require calibration, not an assertion of 95% real-world accuracy.
 7. Removed raw custom-category names from telemetry; used keyed cohort IDs.
 8. Identified existing eval coverage limits and absent correction attribution.
 
-These findings are a design/documentation review. No provider calls, paid tests,
-runtime routing, Coolify configuration changes, or deployment have been performed.
+The initial findings were a design review; runtime routing is now implemented and
+verified with mocked providers. No paid provider calls or Coolify deployment have
+been performed.
+
+## Clef migration decision (2026-10-08)
+
+User selected Clef Flash instead of Jev and explicitly chose Prime Intellect.
+Decisions requests send `provider={"only":["primeintellect"],"allow_fallbacks":false}`.
+The endpoint advertises 16,384 context tokens and $0.021/M input, zero output
+pricing. Workers AI documents roughly 2,000 text-state-token truncation despite
+its larger advertised context. Provider failure uses the existing recorded
+OpenAI control fallback; it does not silently switch Clef providers.
+
+Remove obsolete `OPENROUTER_JEV_MODEL`; startup rejects it. Use a fresh
+`clef-flash-v1` experiment ID to separate historical Jev measurements. This can
+reassign users when migrating; assignment remains stable within the experiment.
+Provider changes also change the configuration fingerprint. Recalibrate on
+representative labeled emails before enabling: previous Jev results and mocked
+routing tests cannot prove Clef accuracy. The old Linux image verification
+predates this migration; current checks are recorded separately in task evidence.
 
 ## Official sources
 
+- Clef Flash and Cloudflare truncation notice:
+  https://openrouter.ai/cloudflare/clef-flash
+- Clef provider contexts and prices:
+  https://openrouter.ai/api/v1/models/cloudflare/clef-flash/endpoints
+
 - Decisions request/response endpoint and model ID:
-  https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-request
-- Jev decomposition, state and response validation:
-  https://openrouter.ai/blog/tutorials/how-to-use-jev/
+  https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-questions-and-answers-request
 - Structured output and provider parameter support:
   https://openrouter.ai/docs/guides/features/structured-outputs
 - OpenRouter GPT-5 nano model:
   https://openrouter.ai/openai/gpt-5-nano
-- Jev probabilities versus confidence:
-  https://docs.typesafe.ai/confidence
-- Jev documented limitations:
-  https://docs.typesafe.ai/model-jaggedness/jev-1.13
-- Jev API surfaces, model ID, and limits:
-  https://openrouter.ai/docs/guides/community/jev
 - OpenAI-compatible OpenRouter base URL:
   https://openrouter.ai/docs/guides/community/openai-sdk
 - Usage/cost accounting and deprecated include flag:

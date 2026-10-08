@@ -31,6 +31,18 @@ class FoundationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 Settings.from_env({'CLASSIFICATION_AB_TREATMENT_PERCENT': invalid})
 
+    def test_clef_defaults_and_legacy_model_setting_rejected(self):
+        cfg = Settings.from_env({})
+        self.assertEqual(cfg.decision_model, 'cloudflare/clef-flash')
+        self.assertEqual(cfg.experiment, 'clef-flash-v1')
+        self.assertEqual(cfg.decision_provider, 'primeintellect')
+        other = Settings.from_env({'OPENROUTER_DECISION_PROVIDER': 'cloudflare'})
+        self.assertNotEqual(cfg.fingerprint(), other.fingerprint())
+        with self.assertRaises(ValueError):
+            Settings.from_env({'OPENROUTER_DECISION_PROVIDER': 'unknown-provider'})
+        with self.assertRaises(ValueError):
+            Settings.from_env({'OPENROUTER_JEV_MODEL': 'typesafe/jev-1.13'})
+
     def test_private_writer_and_restart_files(self):
         with tempfile.TemporaryDirectory() as folder:
             a, b = EventWriter(folder), EventWriter(folder)
@@ -51,7 +63,7 @@ class FoundationTests(unittest.TestCase):
         self.assertEqual(got['cost_source'], 'estimated')
         self.assertIsNone(normalize_usage(None, 'openai', 'gpt-5-nano')['cost'])
         self.assertEqual(normalize_usage({'input_tokens': 5, 'output_tokens': 1, 'cost': 0},
-                                        'openrouter', 'typesafe/jev-1.13')['cost'], 0)
+                                        'openrouter', 'cloudflare/clef-flash')['cost'], 0)
 
     def test_embedding_cost_without_completion_tokens(self):
         self.assertAlmostEqual(normalize_usage({'prompt_tokens': 1000}, 'openai',

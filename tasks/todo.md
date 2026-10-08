@@ -1,7 +1,7 @@
 # Implementation checklist
 
 - [x] Stable assignment, settings, private measurement writer and usage normalization.
-- [x] Jev policy and conditional summary requests with response validation.
+- [x] Decision-model policy and conditional summary requests with response validation.
 - [x] Single/batch routing, fallback, and shared control batch accounting.
 - [x] Weekly Markdown/JSON report and report tests.
 - [x] Coolify configuration/rollback instructions and final review.
@@ -18,3 +18,7 @@ No deployment, paid provider calls, or real experiment results were produced.
 Final production pass: 29 tests pass, patched dependency audit reports no known
 vulnerabilities, and Uvicorn/health-check runtime verification passes with mocks.
 See `production-readiness.md` for the final review and deployment limitations.
+
+Clef migration: switched the decision model to `cloudflare/clef-flash`, pinned
+Prime Intellect, and isolated the new experiment as `clef-flash-v1`. Deployment
+variables and report commands are updated in `eval/README.md`.

@@ -53,13 +53,13 @@ Assertions under `expect`:
 | `not_category`      | prediction must **not** equal this; a **list** means none-of   |
 | `response_required` | optional boolean check                                          |
 
-## Jev A/B experiment
+## Clef Flash A/B experiment
 
 The experiment is disabled by default. When enabled, stable SHA-256 assignment
 routes approximately 50% of users to each variant; email volume need not be 50/50.
 The control uses the existing OpenAI `gpt-5-nano` prompt. Treatment uses
-OpenRouter `typesafe/jev-1.13` for decisions and `openai/gpt-5-nano` only for
-needed summary/action text. Failures in Jev or summary generation fall back to
+OpenRouter `cloudflare/clef-flash` for decisions and `openai/gpt-5-nano` only for
+needed summary/action text. Failures in Clef Flash or summary generation fall back to
 the original OpenAI classifier; metrics retain treatment assignment and failure
 stage. No user-facing JSON fields have changed.
 
@@ -74,8 +74,23 @@ Keep the HMAC key, experiment ID, percentage, model names and thresholds stable
 for the week. Changing policy/configuration creates a separate report segment.
 Model confidence is not measured accuracy. The 0.95 category-probability and
 0.5 binary thresholds are starting policies; calibrate on labeled examples
-before enabling live traffic. Jev composite decisions also use binary answers,
+before enabling live traffic. Clef Flash composite decisions also use binary answers,
 so the category threshold is not a 95% guarantee for the entire pipeline.
+
+The classifier is pinned to **Prime Intellect** (`primeintellect`) with provider
+fallbacks disabled. Its advertised context is 16,384 tokens, priced at $0.021
+per million input tokens (zero output-token price at documentation check).
+Cloudflare Workers AI currently documents truncation to roughly the first 2,000
+text-state tokens; pinning avoids that provider. These are provider limits and
+prices, not measured email accuracy. Each treatment email has its own Decisions
+request, including corrections and questions; batches are processed with bounded
+concurrency rather than one ten-email Decisions prompt.
+
+Remove obsolete `OPENROUTER_JEV_MODEL` from local/Coolify variables; startup
+rejects it with migration guidance. Use `clef-flash-v1` as a fresh experiment ID
+so previous Jev observations are not pooled. Changing the ID can reassign users;
+assignment stays stable within the new experiment. Choice confidence is optional;
+the cutoff uses selected-option probabilities.
 
 ### Coolify
 
@@ -100,7 +115,9 @@ Set these **runtime** environment variables in Coolify:
 ```dotenv
 CLASSIFICATION_AB_ENABLED=true
 CLASSIFICATION_AB_TREATMENT_PERCENT=50
-CLASSIFICATION_AB_EXPERIMENT_ID=jev-v1
+CLASSIFICATION_AB_EXPERIMENT_ID=clef-flash-v1
+OPENROUTER_DECISION_MODEL=cloudflare/clef-flash
+OPENROUTER_DECISION_PROVIDER=primeintellect
 AB_DATA_DIR=/app/data/ab
 AB_REPORT_DIR=/app/reports
 ```
@@ -143,7 +160,7 @@ For the second option the HMAC key and measurement storage remain required.
 From the Coolify container terminal, adjusting dates to the actual week:
 
 ```sh
-python eval/report_ab.py --data-dir /app/data/ab --output-dir /app/reports --experiment-id jev-v1 --start 2026-10-08 --end 2026-10-15
+python eval/report_ab.py --data-dir /app/data/ab --output-dir /app/reports --experiment-id clef-flash-v1 --start 2026-10-08 --end 2026-10-15
 ```
 
 This writes private server files:
@@ -216,9 +233,13 @@ podman run --rm --network none --entrypoint python localhost/neatmail:production
 
 On Windows, a running Podman WSL machine is required. If the Windows remote
 connection drops during a build, the same command can run directly inside that
-machine's WSL distribution. The final local production pass verified the Linux
+machine's WSL distribution. The previous Jev production pass verified the Linux
 build, image health check, mocked API, report CLI and named-volume persistence;
-it did not verify live provider access or the actual Coolify server.
+that evidence predates the Clef migration. The updated Clef Linux image also
+builds and passes all 32 offline tests and `pip check`; its health-check
+configuration is retained. On this rootless WSL machine, test containers required
+`--cgroups=disabled` because the pids controller was unavailable. Live Clef access,
+current Coolify storage and actual server health remain deployment checks.
 
 ```sh
 python -m unittest discover -s tests -v
@@ -235,7 +256,9 @@ GPT-5 nano deprecated; the requested model is retained rather than replaced.
 
 Official integration references:
 
-- [OpenRouter Decisions API](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-request)
+- [Clef Flash model and provider truncation notice](https://openrouter.ai/cloudflare/clef-flash)
+- [Live Clef provider limits and prices](https://openrouter.ai/api/v1/models/cloudflare/clef-flash/endpoints)
+- [OpenRouter Decisions API](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-questions-and-answers-request)
 - [OpenRouter structured output support](https://openrouter.ai/docs/guides/features/structured-outputs)
 - [Automatic usage accounting](https://openrouter.ai/docs/cookbook/administration/usage-accounting)
 - [Coolify persistent storage](https://coolify.io/docs/applications/configuration/persistent-storage)

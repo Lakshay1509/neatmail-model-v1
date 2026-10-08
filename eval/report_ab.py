@@ -248,7 +248,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--data-dir', default=os.getenv('AB_DATA_DIR', 'data/ab'))
     parser.add_argument('--output-dir', default=os.getenv('AB_REPORT_DIR', 'reports'))
-    parser.add_argument('--experiment-id', default=os.getenv('CLASSIFICATION_AB_EXPERIMENT_ID', 'jev-v1'))
+    parser.add_argument('--experiment-id', default=os.getenv('CLASSIFICATION_AB_EXPERIMENT_ID', 'clef-flash-v1'))
     parser.add_argument('--start', required=True, help='UTC start date/time, inclusive')
     parser.add_argument('--end', required=True, help='UTC end date/time, exclusive')
     parser.add_argument('--quality-file', help='Private JSON array of reviewer records')

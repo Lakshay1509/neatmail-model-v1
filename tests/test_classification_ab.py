@@ -30,7 +30,7 @@ def answers(payload, category='topic', automated=0, cold=0, obligation=1, judgme
             value = dict(automated=automated, cold=cold, obligation=obligation,
                          judgment=judgment, reply=reply)[key]
             result[key] = {'type': 'noul', 'noul': value}
-    return {'model': 'typesafe/jev-1.13', 'answers': result,
+    return {'model': 'cloudflare/clef-flash', 'answers': result,
             'usage': {'input_tokens': 20, 'output_tokens': 5, 'cost': .001}}
 
 
@@ -49,14 +49,14 @@ class TreatmentTests(unittest.TestCase):
             try:
                 with patch('classification_ab.time.sleep'):
                     if transient:
-                        treatment._post('jev', 'https://openrouter.ai/api/alpha/decisions',
-                                        {'model': 'typesafe/jev-1.13'}, time.monotonic()+60,
+                        treatment._post('classifier', 'https://openrouter.ai/api/alpha/decisions',
+                                        {'model': 'cloudflare/clef-flash'}, time.monotonic()+60,
                                         lambda **e: events.append(e))
                         self.assertEqual(len(calls), 2)
                     else:
                         with self.assertRaises(TreatmentError):
-                            treatment._post('jev', 'https://openrouter.ai/api/alpha/decisions',
-                                            {'model': 'typesafe/jev-1.13'}, time.monotonic()+60,
+                            treatment._post('classifier', 'https://openrouter.ai/api/alpha/decisions',
+                                            {'model': 'cloudflare/clef-flash'}, time.monotonic()+60,
                                             lambda **e: events.append(e))
                         self.assertEqual(len(calls), 1)
             finally:
@@ -91,6 +91,20 @@ class TreatmentTests(unittest.TestCase):
         self.assertTrue(all(url.startswith('https://openrouter.ai/') for url, _ in self.calls))
         self.assertNotIn('private-user', json.dumps(self.calls))
         self.assertEqual(self.calls[1][1]['provider'], {'require_parameters': True})
+
+    def test_clef_decision_model_and_optional_confidence(self):
+        def omit_confidence(response):
+            for answer in response['answers'].values():
+                answer.pop('confidence', None)
+        result = self.run_case(transform=omit_confidence)
+        self.assertEqual(result['category'], 'Pending Response')
+        self.assertEqual(self.calls[0][1]['model'], 'cloudflare/clef-flash')
+        self.assertEqual(self.calls[0][1]['provider'],
+                         {'only': ['primeintellect'], 'allow_fallbacks': False})
+
+    def test_invalid_optional_confidence_falls_back(self):
+        with self.assertRaises(TreatmentError):
+            self.run_case(transform=lambda r: r['answers']['topic'].update(confidence=2))
 
     def test_topic_cold_and_digest_skip_summary(self):
         for item, values in [(email(), {'obligation': 0, 'reply': 0}),
@@ -156,7 +170,7 @@ class TreatmentTests(unittest.TestCase):
         with patch('classification_ab.time.sleep'):
             result = treatment.classify(email(), [], 'standard', lambda **event: events.append(event))
         self.assertEqual(result['category'], 'Updates')
-        self.assertEqual([e['attempt'] for e in events if e['stage'] == 'jev'], [1, 2])
+        self.assertEqual([e['attempt'] for e in events if e['stage'] == 'classifier'], [1, 2])
 
     def test_unknown_choice_and_too_many_tags_fail(self):
         with self.assertRaises(TreatmentError):

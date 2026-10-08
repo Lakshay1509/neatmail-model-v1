@@ -69,3 +69,21 @@ Upstream release notes reviewed:
 Rollback: set `CLASSIFICATION_AB_ENABLED=false`, save, and restart/redeploy.
 Preserve measurement/report volumes. GitHub CI does not automatically gate
 Coolify's Git-triggered deployments: use a verified commit or configure the gate.
+
+## Clef Flash migration verification (2026-10-08)
+
+- Decision model now `cloudflare/clef-flash`, explicitly pinned to Prime Intellect
+  with OpenRouter provider fallbacks disabled. Summary model/control unchanged.
+- New experiment ID `clef-flash-v1`; obsolete `OPENROUTER_JEV_MODEL` rejected.
+  Updated configuration, source links, Coolify variables and report commands.
+- 32 offline tests pass locally and inside the newly built Linux image
+  `localhost/neatmail:clef-check`; compilation and diff checks pass.
+- Podman built this image in Docker format on the recreated `dev-engine`.
+  Inspection confirms the Docker health-check configuration remains present.
+  Image `pip check` passes. The rootless WSL runtime lacks its delegated pids
+  controller; disposable test containers used `--cgroups=disabled` to run.
+  This workaround was local to these checks; no deployment setting was changed.
+- This migration did not rerun the earlier named-volume persistence or live
+  health-check smoke tests. Those earlier checks apply to the prior Jev build.
+- No live Clef API calls, calibration, remote CI or Coolify deployment performed.
+  Keep the experiment disabled until staging access/quality and mounts pass.

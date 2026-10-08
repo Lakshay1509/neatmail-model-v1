@@ -57,7 +57,7 @@ class RoutingTests(unittest.TestCase):
             items = []
             for variant in ['treatment', 'control', 'treatment', 'control']:
                 item = email()
-                item.user_id = next(str(i) for i in range(100) if assign_variant(str(i), 'jev-v1', 50) == variant)
+                item.user_id = next(str(i) for i in range(100) if assign_variant(str(i), 'clef-flash-v1', 50) == variant)
                 item.id = 'duplicate'
                 items.append(item)
             batches = []
