@@ -2,15 +2,29 @@ import os
 import re
 import json
 from typing import List, Optional
-from fastapi import FastAPI, HTTPException, Security, status
+from fastapi import FastAPI, HTTPException, Security, status, Response
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 from openai import OpenAI
 from dotenv import load_dotenv
 from pinecone import Pinecone, ServerlessSpec
 import uuid
+from contextlib import asynccontextmanager
+from classification_ab import Settings
+from ab_routing import Experiment
+from ab_metrics import observed_call
 
 load_dotenv()
+
+ab_settings = Settings.from_env()
+experiment = Experiment(ab_settings) if ab_settings.enabled else None
+
+
+@asynccontextmanager
+async def lifespan(app):
+    yield
+    if experiment:
+        experiment.close()
 
 API_KEY_NAME = "X-API-Key"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
@@ -29,7 +43,7 @@ def get_api_key(api_key_header: str = Security(api_key_header)):
         detail="Invalid API Key"
     )
 
-app = FastAPI(dependencies=[Security(get_api_key)])
+app = FastAPI(dependencies=[Security(get_api_key)], lifespan=lifespan)
 
 # Make sure to set your OPENAI_API_KEY environment variable
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
@@ -195,7 +209,8 @@ def init_index():
 index = init_index()
 
 def embed(text: str) -> list[float]:
-    response = client.embeddings.create(model=EMBEDDING_MODEL, input=text)
+    response = observed_call('embedding', 'openai', EMBEDDING_MODEL,
+                             lambda: client.embeddings.create(model=EMBEDDING_MODEL, input=text))
     return response.data[0].embedding
 
 
@@ -271,8 +286,9 @@ def build_few_shot_block(corrections: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def classify_email(email_data: EmailRequest) -> EmailClassificationResult:
-    corrections = get_corrections(email_data.user_id, email_data.subject, email_data.bodySnippet)
+def classify_email_control(email_data: EmailRequest, corrections=None) -> EmailClassificationResult:
+    if corrections is None:
+        corrections = get_corrections(email_data.user_id, email_data.subject, email_data.bodySnippet)
     few_shot_block = build_few_shot_block(corrections)
 
     tags = email_data.tags
@@ -328,16 +344,16 @@ Classify. Return valid JSON."""
     }
 
     try:
-       completion = client.chat.completions.create(
+       completion = observed_call('control', 'openai', 'gpt-5-nano', lambda: client.chat.completions.create(
         model="gpt-5-nano",
         messages=messages,
         response_format=schema,
         reasoning_effort="medium",
         max_completion_tokens=6000,
         seed=42,
-    )
+    ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"OpenAI API error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Classification provider request failed") from None
 
     content = completion.choices[0].message.content
     if not content:
@@ -388,7 +404,7 @@ def _get_sensitivity_guidance(sensitivity: str) -> str:
     )
 
 
-def classify_batch(requests: List[BatchEmailItem]) -> List[BatchEmailResult]:
+def classify_batch_control(requests: List[BatchEmailItem], prepared_corrections=None, strict=False) -> List[BatchEmailResult]:
     """Classify up to 10 emails in a single LLM call. One prompt, one response."""
     if not requests:
         return []
@@ -399,8 +415,9 @@ def classify_batch(requests: List[BatchEmailItem]) -> List[BatchEmailResult]:
         )
 
     email_blocks = []
-    for req in requests:
-        corrections = get_corrections(req.user_id, req.subject, req.bodySnippet)
+    for position, req in enumerate(requests):
+        corrections = (prepared_corrections[position] if prepared_corrections is not None else
+                       get_corrections(req.user_id, req.subject, req.bodySnippet))
         few_shot_block = build_few_shot_block(corrections)
 
         tag_context_lines = []
@@ -470,16 +487,16 @@ Classify each email. Return only valid JSON."""
     }
 
     try:
-        completion = client.chat.completions.create(
+        completion = observed_call('control', 'openai', 'gpt-5-nano', lambda: client.chat.completions.create(
         model="gpt-5-nano",
         messages=messages,
         response_format=schema,
         reasoning_effort="medium",
         max_completion_tokens=20000,
         seed=42,
-    )
+    ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"OpenAI API error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Classification provider request failed") from None
 
     content = completion.choices[0].message.content
     if not content:
@@ -495,6 +512,13 @@ Classify each email. Return only valid JSON."""
         raw_results = parsed_json.get("results", [])
     except json.JSONDecodeError:
         raise HTTPException(status_code=500, detail="Invalid JSON response from OpenAI")
+
+    if strict:
+        expected_ids = {r.id for r in requests}
+        if (not isinstance(raw_results, list) or len(raw_results) != len(requests)
+                or any(not isinstance(r, dict) for r in raw_results)
+                or {r.get('id') for r in raw_results} != expected_ids):
+            raise HTTPException(status_code=500, detail="Invalid batch IDs from classifier")
 
     req_map = {r.id: r for r in requests}
 
@@ -546,14 +570,37 @@ Classify each email. Return only valid JSON."""
     return final_results
 
 
+def _retrieve(email):
+    return get_corrections(email.user_id, email.subject, email.bodySnippet)
+
+
+def classify_email(request: EmailRequest, trace_callback=None):
+    if experiment is None:
+        return classify_email_control(request)
+    return EmailClassificationResult(**experiment.single(
+        request, _retrieve, classify_email_control, _get_sensitivity_guidance, trace_callback))
+
+
+def classify_batch(requests: List[BatchEmailItem], trace_callback=None):
+    if experiment is None:
+        return classify_batch_control(requests)
+    if len(requests) > MAX_BATCH_SIZE:
+        raise HTTPException(status_code=400, detail=f"Batch size exceeds maximum of {MAX_BATCH_SIZE}. Received {len(requests)} requests.")
+    results = experiment.batch(requests, _retrieve, classify_email_control,
+        lambda rows, corrections: classify_batch_control(rows, corrections, strict=True),
+        _get_sensitivity_guidance, trace_callback)
+    return [BatchEmailResult(**row) for row in results]
+
+
 @app.post("/classify", response_model=EmailClassificationResult)
-def classify_email_endpoint(request: EmailRequest):
-    return classify_email(request)
+def classify_email_endpoint(request: EmailRequest, response: Response):
+    # Opaque IDs allow the caller to associate private reviews; no variant is exposed.
+    return classify_email(request, lambda ids: response.headers.update({'X-AB-Item-IDs': ','.join(ids)}))
 
 
 @app.post("/classify-batch", response_model=BatchClassifyResponse)
-def classify_batch_endpoint(request: BatchClassifyRequest):
-    results = classify_batch(request.requests)
+def classify_batch_endpoint(request: BatchClassifyRequest, response: Response):
+    results = classify_batch(request.requests, lambda ids: response.headers.update({'X-AB-Item-IDs': ','.join(ids)}))
     return {"results": results}
 
 @app.post("/correct")
